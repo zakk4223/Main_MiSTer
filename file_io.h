@@ -116,6 +116,7 @@ int DirDelete(const char *name);
 
 //save/load from config dir
 #define CONFIG_DIR "config"
+int FileConfigExists(const char *name);
 int FileSaveConfig(const char *name, void *pBuffer, int size);
 int FileLoadConfig(const char *name, void *pBuffer, int size); // supply pBuffer = 0 to get the file size without loading
 int FileDeleteConfig(const char *name);

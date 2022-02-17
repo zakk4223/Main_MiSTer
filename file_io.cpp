@@ -735,6 +735,14 @@ int FileLoad(const char *name, void *pBuffer, int size)
 	return ret;
 }
 
+int FileConfigExists(const char *name)
+{
+	char path[256] = { CONFIG_DIR"/" };
+	strcat(path, name);
+  return FileExists(path);
+}
+
+
 int FileLoadConfig(const char *name, void *pBuffer, int size)
 {
 	char path[256] = { CONFIG_DIR"/" };

@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <stdarg.h>
 
+#include "file_io.h"
 #include "input.h"
 #include "user_io.h"
 #include "menu.h"
@@ -1081,6 +1082,13 @@ static int load_map(const char *name, void *pBuffer, int size)
 	return ret;
 }
 
+static int map_exists(const char *name)
+{
+  char path[256] = {JOYMAP_DIR };
+  strcat(path, name);
+  return FileConfigExists(path);
+}
+
 static void delete_map(const char *name)
 {
 	char path[256] = { JOYMAP_DIR };
@@ -1157,11 +1165,18 @@ int get_map_cancel()
 	return (mapping && !is_menu() && osd_timer && CheckTimer(osd_timer));
 }
 
-static char *get_map_name(int dev, int def)
+static char *get_map_name(int dev, int def, int writing = 0)
 {
 	static char name[128];
 	if (def || is_menu()) sprintf(name, "input_%s%s_v3.map", input[dev].idstr, input[dev].mod ? "_m" : "");
-	else sprintf(name, "%s_input_%s%s_v3.map", user_io_get_core_name(), input[dev].idstr, input[dev].mod ? "_m" : "");
+	else 
+  {
+    sprintf(name, "%s_input_%s%s_v3.map", user_io_get_core_name(), input[dev].idstr, input[dev].mod ? "_m" : "");
+    if (!writing && !map_exists(name))
+    {
+       sprintf(name, "%s.zip/%s_input_%s%s_v3.map", input[dev].idstr, user_io_get_core_name(), input[dev].idstr, input[dev].mod ? "_m" : "");
+    }
+  }
 	return name;
 }
 
@@ -1195,7 +1210,7 @@ void finish_map_setting(int dismiss)
 			input[i].has_mmap = 0;
 		}
 
-		if (!dismiss) save_map(get_map_name(mapping_dev, 0), &input[mapping_dev].map, sizeof(input[mapping_dev].map));
+		if (!dismiss) save_map(get_map_name(mapping_dev, 0, 1), &input[mapping_dev].map, sizeof(input[mapping_dev].map));
 		if (dismiss == 2) delete_map(get_map_name(mapping_dev, 0));
 	}
 }
