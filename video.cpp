@@ -244,18 +244,22 @@ static int findPLLpar(double Fout, uint32_t *pc, uint32_t *pm, double *pko)
 	return 0;
 }
 
-static void setPLL(double Fout, vmode_custom_t *v)
+static bool setPLL(double Fout, vmode_custom_t *v)
 {
 	PROFILE_FUNCTION();
 
 	double Fpix;
 	double fvco, ko;
 	uint32_t m, c;
+	bool foundPLL = false;
+	bool found = true;
+
 
 	printf("Calculate PLL for %.4f MHz:\n", Fout);
-
-	if (!findPLLpar(Fout, &c, &m, &ko))
+	if(!findPLLpar(Fout, &c, &m, &ko))
 	{
+
+		found = false;
 		c = 1;
 		while ((Fout*c) < 400) c++;
 
@@ -297,6 +301,7 @@ static void setPLL(double Fout, vmode_custom_t *v)
 	v->item[20] = k;
 
 	v->Fpix = Fpix;
+	return found;
 }
 
 struct ScalerFilter
@@ -1918,7 +1923,7 @@ static int get_edid_vmode(vmode_custom_t *v)
 	}
 
 	v->param.rb = 2;
-	setPLL(v->Fpix, v);
+
 	return 1;
 }
 
@@ -2125,7 +2130,19 @@ static void video_set_mode(vmode_custom_t *v, double Fpix)
 		set_vrr_mode();
 	}
 
-	if (Fpix) setPLL(Fpix, &v_cur);
+	if (Fpix) {
+		for(int i = 0; i < 10; i++) {
+			if (setPLL(Fpix, &v_cur))
+			{
+				v_fix.param.vfp += i;
+				break;
+			}
+			int horz = v_fix.param.hact + v_fix.param.hbp + v_fix.param.hfp + v_fix.param.hs;
+			int vert = v_fix.param.vact + v_fix.param.vbp + (v_fix.param.vfp+i+1) + v_fix.param.vs;
+			Fpix = horz * vert * (100000000.0f/current_video_info.vtime); 
+			Fpix /= 1000000.f;
+		}
+	}
 	if (use_vrr)
 	{
 		printf("Requested variable refresh rate: min=%dHz, max=%dHz\n", vrr_min_fr, vrr_max_fr);
@@ -2817,6 +2834,7 @@ void video_mode_adjust()
 			double Fpix = 0;
 			if (adjust)
 			{
+				
 				Fpix = 100 * (v->item[1] + v->item[2] + v->item[3] + v->item[4]) * (v->item[5] + v->item[6] + v->item[7] + v->item[8]);
 				Fpix /= vtime;
 				if (Fpix < 2.f || Fpix > 300.f)
