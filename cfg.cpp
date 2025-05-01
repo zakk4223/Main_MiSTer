@@ -16,6 +16,8 @@
 #include "support/arcade/mra_loader.h"
 
 cfg_t cfg;
+static FILE *orig_stdout = NULL;
+static FILE *dev_null = NULL;
 
 typedef enum
 {
@@ -64,6 +66,7 @@ static const ini_var_t ini_vars[] =
 	{ "OSD_TIMEOUT", (void*)(&(cfg.osd_timeout)), INT16, 0, 3600 },
 	{ "DIRECT_VIDEO", (void*)(&(cfg.direct_video)), UINT8, 0, 1 },
 	{ "OSD_ROTATE", (void*)(&(cfg.osd_rotate)), UINT8, 0, 2 },
+	{ "DEADZONE", (void*)(&(cfg.controller_deadzone)), STRINGARR, sizeof(cfg.controller_deadzone) / sizeof(*cfg.controller_deadzone), sizeof(*cfg.controller_deadzone) },
 	{ "GAMEPAD_DEFAULTS", (void*)(&(cfg.gamepad_defaults)), UINT8, 0, 1 },
 	{ "RECENTS", (void*)(&(cfg.recents)), UINT8, 0, 1 },
 	{ "CONTROLLER_INFO", (void*)(&(cfg.controller_info)), UINT8, 0, 10 },
@@ -97,35 +100,38 @@ static const ini_var_t ini_vars[] =
 	{ "BT_AUTO_DISCONNECT", (void*)(&(cfg.bt_auto_disconnect)), UINT32, 0, 180 },
 	{ "BT_RESET_BEFORE_PAIR", (void*)(&(cfg.bt_reset_before_pair)), UINT8, 0, 1 },
 	{ "WAITMOUNT", (void*)(&(cfg.waitmount)), STRING, 0, sizeof(cfg.waitmount) - 1 },
-	{ "RUMBLE", (void *)(&(cfg.rumble)), UINT8, 0, 1},
+	{ "RUMBLE", (void *)(&(cfg.rumble)), UINT8, 0, 1 },
 	{ "WHEEL_FORCE", (void*)(&(cfg.wheel_force)), UINT8, 0, 100 },
 	{ "WHEEL_RANGE", (void*)(&(cfg.wheel_range)), UINT16, 0, 1000 },
-	{ "HDMI_GAME_MODE", (void *)(&(cfg.hdmi_game_mode)), UINT8, 0, 1},
-	{ "VRR_MODE", (void *)(&(cfg.vrr_mode)), UINT8, 0, 3},
-	{ "VRR_MIN_FRAMERATE", (void *)(&(cfg.vrr_min_framerate)), UINT8, 0, 255},
-	{ "VRR_MAX_FRAMERATE", (void *)(&(cfg.vrr_max_framerate)), UINT8, 0, 255},
-	{ "VRR_VESA_FRAMERATE", (void *)(&(cfg.vrr_vesa_framerate)), UINT8, 0, 255},
+	{ "HDMI_GAME_MODE", (void *)(&(cfg.hdmi_game_mode)), UINT8, 0, 1 },
+	{ "VRR_MODE", (void *)(&(cfg.vrr_mode)), UINT8, 0, 3 },
+	{ "VRR_MIN_FRAMERATE", (void *)(&(cfg.vrr_min_framerate)), UINT8, 0, 255 },
+	{ "VRR_MAX_FRAMERATE", (void *)(&(cfg.vrr_max_framerate)), UINT8, 0, 255 },
+	{ "VRR_VESA_FRAMERATE", (void *)(&(cfg.vrr_vesa_framerate)), UINT8, 0, 255 },
 	{ "VIDEO_OFF", (void*)(&(cfg.video_off)), INT16, 0, 3600 },
-	{ "PLAYER_1_CONTROLLER", (void*)(&(cfg.player_controller[0])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "PLAYER_2_CONTROLLER", (void*)(&(cfg.player_controller[1])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "PLAYER_3_CONTROLLER", (void*)(&(cfg.player_controller[2])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "PLAYER_4_CONTROLLER", (void*)(&(cfg.player_controller[3])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "PLAYER_5_CONTROLLER", (void*)(&(cfg.player_controller[4])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "PLAYER_6_CONTROLLER", (void*)(&(cfg.player_controller[5])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0])},
-	{ "DISABLE_AUTOFIRE", (void *)(&(cfg.disable_autofire)), UINT8, 0, 1},
-	{ "VIDEO_BRIGHTNESS", (void *)(&(cfg.video_brightness)), UINT8, 0, 100},
-	{ "VIDEO_CONTRAST", (void *)(&(cfg.video_contrast)), UINT8, 0, 100},
-	{ "VIDEO_SATURATION", (void *)(&(cfg.video_saturation)), UINT8, 0, 100},
-	{ "VIDEO_HUE", (void *)(&(cfg.video_hue)), UINT16, 0, 360},
-	{ "VIDEO_GAIN_OFFSET", (void *)(&(cfg.video_gain_offset)), STRING, 0, sizeof(cfg.video_gain_offset)},
+	{ "PLAYER_1_CONTROLLER", (void*)(&(cfg.player_controller[0])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "PLAYER_2_CONTROLLER", (void*)(&(cfg.player_controller[1])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "PLAYER_3_CONTROLLER", (void*)(&(cfg.player_controller[2])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "PLAYER_4_CONTROLLER", (void*)(&(cfg.player_controller[3])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "PLAYER_5_CONTROLLER", (void*)(&(cfg.player_controller[4])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "PLAYER_6_CONTROLLER", (void*)(&(cfg.player_controller[5])), STRINGARR, sizeof(cfg.player_controller[0]) / sizeof(cfg.player_controller[0][0]), sizeof(cfg.player_controller[0][0]) },
+	{ "DISABLE_AUTOFIRE", (void *)(&(cfg.disable_autofire)), UINT8, 0, 1 },
+	{ "VIDEO_BRIGHTNESS", (void *)(&(cfg.video_brightness)), UINT8, 0, 100 },
+	{ "VIDEO_CONTRAST", (void *)(&(cfg.video_contrast)), UINT8, 0, 100 },
+	{ "VIDEO_SATURATION", (void *)(&(cfg.video_saturation)), UINT8, 0, 100 },
+	{ "VIDEO_HUE", (void *)(&(cfg.video_hue)), UINT16, 0, 360 },
+	{ "VIDEO_GAIN_OFFSET", (void *)(&(cfg.video_gain_offset)), STRING, 0, sizeof(cfg.video_gain_offset) },
 	{ "HDR", (void*)(&cfg.hdr), UINT8, 0, 2 },
-	{ "HDR_MAX_NITS", (void*)(&(cfg.hdr_max_nits)), UINT16, 100, 10000},
-	{ "HDR_AVG_NITS", (void*)(&(cfg.hdr_avg_nits)), UINT16, 100, 10000},
+	{ "HDR_MAX_NITS", (void*)(&(cfg.hdr_max_nits)), UINT16, 100, 10000 },
+	{ "HDR_AVG_NITS", (void*)(&(cfg.hdr_avg_nits)), UINT16, 100, 10000 },
 	{ "VGA_MODE", (void*)(&(cfg.vga_mode)), STRING, 0, sizeof(cfg.vga_mode) - 1 },
-	{ "NTSC_MODE", (void *)(&(cfg.ntsc_mode)), UINT8, 0, 2},
+	{ "NTSC_MODE", (void *)(&(cfg.ntsc_mode)), UINT8, 0, 2 },
 	{ "CONTROLLER_UNIQUE_MAPPING", (void *)(cfg.controller_unique_mapping), UINT32ARR, 0, 0xFFFFFFFF },
 	{ "OSD_LOCK", (void*)(&(cfg.osd_lock)), STRING, 0, sizeof(cfg.osd_lock) - 1 },
-	{ "OSD_LOCK_TIME", (void*)(&(cfg.osd_lock_time)), UINT16, 0, 60},
+	{ "OSD_LOCK_TIME", (void*)(&(cfg.osd_lock_time)), UINT16, 0, 60 },
+	{ "DEBUG", (void *)(&(cfg.debug)), UINT8, 0, 1 },
+	{ "MAIN", (void*)(&(cfg.main)), STRING, 0, sizeof(cfg.main) - 1 },
+	{"VFILTER_INTERLACE_DEFAULT", (void*)(&(cfg.vfilter_interlace_default)), STRING, 0, sizeof(cfg.vfilter_interlace_default) - 1 },
 };
 
 static const int nvars = (int)(sizeof(ini_vars) / sizeof(ini_var_t));
@@ -322,6 +328,9 @@ static void ini_parse_numeric(const ini_var_t *var, const char *text, void *out)
 	}
 }
 
+// Used to determine if an array variable should be appended or restarted.
+static bool var_array_append[sizeof(ini_vars) / sizeof(ini_var_t)] = {};
+
 static void ini_parse_var(char* buf)
 {
 	// find var
@@ -366,6 +375,18 @@ static void ini_parse_var(char* buf)
 		case STRINGARR:
 			{
 				int item_sz = var->max;
+
+				if (!var_array_append[var_id])
+				{
+					var_array_append[var_id] = true;
+
+					for (int n = 0; n < var->min; n++)
+					{
+						char *str = ((char*)var->var) + (n * item_sz);
+						str[0] = 0;
+					}
+				}
+
 				for (int n = 0; n < var->min; n++)
 				{
 					char *str = ((char*)var->var) + (n * item_sz);
@@ -381,6 +402,14 @@ static void ini_parse_var(char* buf)
 		case HEX32ARR:
 		case UINT32ARR:
 			{
+				if (!var_array_append[var_id])
+				{
+					var_array_append[var_id] = true;
+
+					uint32_t *arr = (uint32_t*)var->var;
+					arr[0] = 0;
+				}
+
 				uint32_t *arr = (uint32_t*)var->var;
 				uint32_t pos = ++arr[0];
 				ini_parse_numeric(var, &buf[i], &arr[pos]);
@@ -389,6 +418,10 @@ static void ini_parse_var(char* buf)
 
 		default:
 			ini_parse_numeric(var, &buf[i], var->var);
+			if (!strcasecmp(var->name, "DEBUG"))
+			{
+				stdout = cfg.debug ? orig_stdout : dev_null;
+			}
 			break;
 		}
 	}
@@ -399,6 +432,18 @@ static void ini_parse(int alt, const char *vmode)
 	static char line[INI_LINE_SIZE];
 	int section = 0;
 	int eof;
+
+	if (!orig_stdout) orig_stdout = stdout;
+	if (!dev_null)
+	{
+		dev_null = fopen("/dev/null", "w");
+		if (dev_null)
+		{
+			int null_fd = fileno(dev_null);
+			if (null_fd >= 0) fcntl(null_fd, F_SETFD, FD_CLOEXEC);
+			stdout = dev_null;
+		}
+	}
 
 	ini_parser_debugf("Start INI parser for core \"%s\"(%s), video mode \"%s\".", user_io_get_core_name(0), user_io_get_core_name(1), vmode);
 
@@ -423,10 +468,18 @@ static void ini_parse(int alt, const char *vmode)
 		{
 			// if first char in line is INI_SECTION_START, get section
 			section = ini_get_section(line, vmode);
+			if (section)
+			{
+				memset(var_array_append, 0, sizeof(var_array_append));
+			}
 		}
 		else if (line[0] == INCL_SECTION && !section)
 		{
 			section = ini_get_section(line, vmode);
+			if (section)
+			{
+				memset(var_array_append, 0, sizeof(var_array_append));
+			}
 		}
 		else if(section)
 		{
@@ -535,6 +588,7 @@ void cfg_parse()
 	cfg.video_saturation = 100;
 	cfg.video_hue = 0;
 	strcpy(cfg.video_gain_offset, "1, 0, 1, 0, 1, 0");
+	strcpy(cfg.main, "MiSTer");
 	has_video_sections = false;
 	using_video_section = false;
 	cfg_error_count = 0;

@@ -37,7 +37,6 @@
 #define NUMPLAYERS 6
 #define UINPUT_NAME "MiSTer virtual input"
 
-
 char joy_bnames[NUMBUTTONS][32] = {};
 int  joy_bcount = 0;
 static struct pollfd pool[NUMDEV + 3];
@@ -1127,6 +1126,7 @@ enum QUIRK
 	QUIRK_JOYCON,
 	QUIRK_LIGHTGUN_CRT,
 	QUIRK_LIGHTGUN,
+	QUIRK_LIGHTGUN_MOUSE,
 	QUIRK_WHEEL,
 };
 
@@ -1199,9 +1199,12 @@ typedef struct
 	char     id[80];
 	char     name[128];
 	char     sysfs[512];
-	int      ss_range;
-	int 	 max_cardinal;
-	float    max_range;
+
+	int      ss_range[2];
+	int 	 max_cardinal[2];
+	float    max_range[2];
+
+	uint32_t deadzone;
 } devInput;
 
 static devInput input[NUMDEV] = {};
@@ -1557,6 +1560,7 @@ int input_has_lightgun()
 		if (input[i].quirk == QUIRK_TOUCHGUN) return 1;
 		if (input[i].quirk == QUIRK_LIGHTGUN) return 1;
 		if (input[i].quirk == QUIRK_LIGHTGUN_CRT) return 1;
+		if (input[i].quirk == QUIRK_LIGHTGUN_MOUSE) return 1;
 	}
 	return 0;
 }
@@ -1641,8 +1645,8 @@ static int keyrah_trans(int key, int press)
 static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int dev);
 
 static int kbd_toggle = 0;
-static uint32_t joy[NUMPLAYERS] = {};
-static uint32_t autofire[NUMPLAYERS] = {};
+static uint64_t joy[NUMPLAYERS] = {};		// 0-31 primary mappings, 32-64 alternate
+static uint64_t autofire[NUMPLAYERS] = {};	// 0-31 primary mappings, 32-64 alternate
 static uint32_t autofirecodes[NUMPLAYERS][BTN_NUM] = {};
 static int af_delay[NUMPLAYERS] = {};
 
@@ -1778,13 +1782,72 @@ static void mouse_btn_req()
 	if (grabbed) mouse_req |= 2;
 }
 
+static inline void joy_clamp(int* value, const int min, const int max)
+{
+	if (*value < min) {
+		*value = min;
+	}
+	else if (*value > max) {
+		*value = max;
+	}
+}
+
+static inline float boxradf(const float angle)
+{
+	return 1.0f / fmaxf(fabsf(sinf(angle)), fabsf(cosf(angle)));
+}
+
+static void joy_apply_deadzone(int* x, int* y, const devInput* dev, const int stick) {
+	// Don't be fancy with such a small deadzone.
+	if (dev->deadzone <= 2) 
+	{
+		if (dev->deadzone && (abs((*x > *y) == (*x > -*y) ? *x : *y) <= dev->deadzone))
+			*x = *y = 0;
+		return;
+	}
+
+	const float radius = hypotf(*x, *y);
+	if (radius <= (float)dev->deadzone)
+	{
+		*x = *y = 0;
+		return;
+	}
+
+	const float angle = atan2f(*y, *x);
+	const float box_radius = boxradf(angle);
+
+	/* A measure of how "cardinal" the angle is,
+	   i.e closeness to [0, 90, 180, 270] degrees (0.0 - 1.0). */
+	const float cardinality = (1.4142136f - box_radius) * 2.4142136f;
+
+	// Expected range for the given angle.
+	const float max_cardinal = dev->max_cardinal[stick] > (2.0f * dev->deadzone) ? dev->max_cardinal[stick] : 127.0f;
+	const float max_diagonal = dev->max_range[stick] > (2.0f * dev->deadzone) ? dev->max_range[stick] : 127.0f;
+	const float range = cardinality * max_cardinal + (1.0f - cardinality) * max_diagonal;
+
+	const float weight = 1.0f - fmaxf(range - radius, .0f) / (range - dev->deadzone);
+	const float adjusted_radius = fminf(weight * range, max_cardinal * box_radius);
+
+	/* Don't ever return a larger magnitude than that was given.
+	   The whole point of this function is to subtract some magnitude, not add. */
+	if (adjusted_radius > radius) return;
+
+	*x = nearbyintf(adjusted_radius * cosf(angle));
+	*y = nearbyintf(adjusted_radius * sinf(angle));
+
+	// Just to be sure.
+	const int min_range = is_psx() ? -128 : -127;
+	joy_clamp(x, min_range, INT8_MAX);
+	joy_clamp(y, min_range, INT8_MAX);
+}
+
 static uint32_t osdbtn = 0;
-static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int bnum, int dont_save = 0)
+static void joy_digital(int jnum, uint64_t mask, uint32_t code, char press, int bnum, int dont_save = 0)
 {
 	static char str[128];
-	static uint32_t lastcode[NUMPLAYERS], lastmask[NUMPLAYERS];
+	static uint32_t lastcode[NUMPLAYERS];
+	static uint64_t lastmask[NUMPLAYERS];
 	int num = jnum - 1;
-
 	if (num < NUMPLAYERS)
 	{
 		if (jnum)
@@ -1825,11 +1888,12 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 						}
 
 						if (!found && zero >= 0) autofirecodes[num][zero] = lastcode[num];
+						
 						autofire[num] = !found ? autofire[num] | lastmask[num] : autofire[num] & ~lastmask[num];
 
 						if (hasAPI1_5())
 						{
-							if (!found) sprintf(str, "Auto fire: %dms", af_delay[num] * 2);
+							if (!found) sprintf(str, "Auto fire: %dms (%uhz)", af_delay[num] * 2, 1000 / (af_delay[num] * 2));
 							else sprintf(str, "Auto fire: OFF");
 							Info(str);
 						}
@@ -1855,12 +1919,12 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 
 						if (hasAPI1_5())
 						{
-							sprintf(str, "Auto fire period: %dms", af_delay[num] * 2);
+							sprintf(str, "Auto fire period: %dms (%uhz)", af_delay[num] * 2, 1000 / (af_delay[num] * 2));
 							Info(str);
 						}
 						else
 						{
-							sprintf(str, "\n\n       Auto fire period\n            %dms", af_delay[num] * 2);
+							sprintf(str, "\n\n       Auto fire period\n            %dms(%uhz)", af_delay[num] * 2, 1000 / (af_delay[num] * 2));
 							InfoMessage(str);
 						}
 
@@ -2066,6 +2130,7 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 		{
 			if (press) joy[num] |= mask;
 			else joy[num] &= ~mask;
+			
 			//user_io_digital_joystick(num, joy[num]);
 
 			if (code)
@@ -2078,41 +2143,62 @@ static void joy_digital(int jnum, uint32_t mask, uint32_t code, char press, int 
 	}
 }
 
+static bool joy_dir_is_diagonal(const int x, const int y)
+{
+	static const float JOY_DIAG_THRESHOLD = .85f;
+	
+	return
+		((x == 0) || (y == 0)) ? false :
+		((x == y) || (x == -y)) ? true :
+		abs((x > y) == (x > -y) ? (float)y / x : (float)x / y) >= JOY_DIAG_THRESHOLD;
+}
+
 static void joy_analog(int dev, int axis, int offset, int stick = 0)
 {
 	int num = input[dev].num;
 	static int pos[2][NUMPLAYERS][2] = {};
 
-	if (grabbed && num > 0 && num < NUMPLAYERS+1)
+	if (grabbed && num > 0 && --num < NUMPLAYERS)
 	{
-		num--;
 		pos[stick][num][axis] = offset;
-		int x = pos[stick][num][0];
-		int y = pos[stick][num][1];
-		if (is_n64() && stick == 0)
+		int x = pos[stick][num][0], y = pos[stick][num][1];
+
+		if (joy_dir_is_diagonal(x, y))
 		{
-			// Update maximum observed cardinal distance
-			const int abs_x = abs(x);
-			const int abs_y = abs(y);
-
-			if (abs_x > input[dev].max_cardinal) input[dev].max_cardinal = abs_x;
-			if (abs_y > input[dev].max_cardinal) input[dev].max_cardinal = abs_y;
-
 			// Update maximum observed diag
 			// Use sum of squares and only calc sqrt() when necessary
-			const int ss_range_curr = x*x + y*y;
-			// compare to max ss_range and update if larger
-			if ((ss_range_curr > input[dev].ss_range) & (abs(abs_x - abs_y) <= 3))
+			const int ss_range_curr = x * x + y * y;
+			if ((ss_range_curr > input[dev].ss_range[stick]))
 			{
-				input[dev].ss_range = ss_range_curr;
-				input[dev].max_range = sqrt(ss_range_curr);
+				input[dev].ss_range[stick] = ss_range_curr;
+				input[dev].max_range[stick] = sqrtf(ss_range_curr);
 			}
-
-			// emulate n64 joystick range and shape for regular -127-+127 controllers
-			n64_joy_emu(x, y, &x, &y, input[dev].max_cardinal, input[dev].max_range);
 		}
-		if(stick) user_io_r_analog_joystick(num, (char)x, (char)y);
-		else user_io_l_analog_joystick(num, (char)x, (char)y);
+
+		// Update maximum observed cardinal distance
+		const int c_dist = abs((x > y) == (x > -y) ? x : y);
+		if (c_dist > input[dev].max_cardinal[stick])
+		{
+			input[dev].max_cardinal[stick] = c_dist;
+		}
+
+		joy_apply_deadzone(&x, &y, &input[dev], stick);
+
+		if (is_n64())
+		{
+			// Emulate N64 joystick range and shape for regular -127-+127 controllers
+			n64_joy_emu(x, y, &x, &y, input[dev].max_cardinal[stick], input[dev].max_range[stick]);
+			stick_swap(num, stick, &num, &stick);
+		}
+
+		if (stick)
+		{
+			user_io_r_analog_joystick(num, (char)x, (char)y);
+		}
+		else
+		{
+			user_io_l_analog_joystick(num, (char)x, (char)y);
+		}
 	}
 }
 
@@ -2300,6 +2386,82 @@ static void restore_player(int dev)
 	update_num_hw(dev, input[dev].num);
 }
 
+// Analog joystick dead zone
+static void setup_deadzone(struct input_event* ev, int dev)
+{
+	// Lightgun/wheel has no dead zone
+	if (ev->type != EV_ABS || (ev->code <= 1 && (input[dev].lightgun || input[dev].quirk == QUIRK_WHEEL)))
+	{
+		input[dev].deadzone = 0U;
+	}
+	// Dual Shock 3/4
+	else if (input[dev].quirk == QUIRK_DS3 || input[dev].quirk == QUIRK_DS4)
+	{
+		input[dev].deadzone = 10U;
+	}
+	// Default dead zone
+	else
+	{
+		input[dev].deadzone = 2U;
+	}
+
+	char cfg_format[32];
+	char cfg_uid[sizeof(*cfg.controller_deadzone)];
+
+	snprintf(cfg_format, sizeof(cfg_format), "%%%u[^ \t,]%%*[ \t,]%%u%%n", (size_t)(sizeof(cfg_uid) - 1));
+
+	const char* dev_uid = get_unique_mapping(dev, 1);
+
+	for (size_t i = 0; i < sizeof(cfg.controller_deadzone) / sizeof(*cfg.controller_deadzone); i++)
+	{
+		const char* cfg_line = cfg.controller_deadzone[i];
+		if (!cfg_line || !strlen(cfg_line)) break;
+
+		uint32_t cfg_vidpid, cfg_deadzone;
+		size_t scan_pos;
+		char vp;
+
+		if ((sscanf(cfg_line, cfg_format, cfg_uid, &cfg_deadzone, &scan_pos) < 2) ||
+			(scan_pos != strlen(cfg_line))) continue;
+
+		if ((
+			sscanf(cfg_uid, "0%*[Xx]%08x%n", &cfg_vidpid, &scan_pos) ||
+			sscanf(cfg_uid, "%08x%n", &cfg_vidpid, &scan_pos)) &&
+			(scan_pos == strlen(cfg_uid)))
+		{
+			const uint32_t vidpid = (input[dev].vid << 16) | input[dev].pid;
+			if (vidpid != cfg_vidpid) continue;
+		}
+		else if ((
+			(sscanf(cfg_uid, "%[VvPp]%*[Ii]%*[Dd]:0%*[Xx]%04x%n", &vp, &cfg_vidpid, &scan_pos) == 2) ||
+			(sscanf(cfg_uid, "%[VvPp]%*[Ii]%*[Dd]:%04x%n", &vp, &cfg_vidpid, &scan_pos) == 2)) &&
+			(scan_pos == strlen(cfg_uid)))
+		{
+			if (vp == 'V' || vp == 'v')
+			{
+				if (input[dev].vid != cfg_vidpid) continue;
+			}
+			else
+			{
+				if (input[dev].pid != cfg_vidpid) continue;
+			}
+		}
+		else if (
+			!strcasestr(input[dev].id, cfg_uid) &&
+			!strcasestr(input[dev].sysfs, cfg_uid) &&
+			!strcasestr(dev_uid, cfg_uid))
+		{
+			continue;
+		}
+
+		if (cfg_deadzone > 64) cfg_deadzone = 64;
+
+		printf("Analog device %s was given a dead zone of %u\n", input[dev].id, cfg_deadzone);
+		input[dev].deadzone = cfg_deadzone;
+		break;
+	}
+}
+
 void unflag_players()
 {
 	for (int k = 1; k < NUMPLAYERS; k++)
@@ -2353,7 +2515,9 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		if (input[dev].timeout > 0) input[dev].timeout = cfg.bt_auto_disconnect * 10;
 
 		//mouse
-		if (ev->code >= BTN_MOUSE && ev->code < BTN_JOYSTICK)
+		//if the lightgun mouse quirk is set then don't pass these button presses to the mouse system
+		//let them get handled and mapped like regular buttons
+		if (ev->code >= BTN_MOUSE && ev->code < BTN_JOYSTICK && input[dev].quirk != QUIRK_LIGHTGUN_MOUSE)
 		{
 			if (ev->value <= 1)
 			{
@@ -2488,7 +2652,9 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 
 	if (!input[dev].num)
 	{
-		int assign_btn = ((input[dev].quirk == QUIRK_PDSP || input[dev].quirk == QUIRK_MSSP) && (ev->type == EV_REL || ev->type == EV_KEY));
+		bool assign_btn = ((input[dev].quirk == QUIRK_PDSP || input[dev].quirk == QUIRK_MSSP) && (ev->type == EV_REL || ev->type == EV_KEY));
+		assign_btn |= (input[dev].quirk == QUIRK_LIGHTGUN_MOUSE && ev->type == EV_KEY && ev->value == 1 && ev->code == BTN_MOUSE);
+
 		if (!assign_btn && ev->type == EV_KEY && ev->value >= 1 && ev->code >= 256)
 		{
 			for (int i = SYS_BTN_RIGHT; i <= SYS_BTN_START; i++)
@@ -3132,14 +3298,15 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 						if (input[dev].has_map == 3) Info("This joystick is not defined");
 						input[dev].has_map = 1;
 					}
-
+					
 					for (uint i = 0; i < BTN_NUM; i++)
 					{
-						if (ev->code == (input[dev].map[i] & 0xFFFF) || ev->code == (input[dev].map[i] >> 16))
-						{
+						uint64_t mask = 0;
+						if (ev->code == (input[dev].map[i] & 0xFFFF)) mask = (uint64_t)1 << i;
+						else if (ev->code == (input[dev].map[i] >> 16)) mask = (uint64_t)1 << (i + 32); // 1 is uint32_t. i spent hours realizing this.
+						if (mask) {
 							if (i <= 3 && origcode == ev->code) origcode = 0; // prevent autofire for original dpad
-							if (ev->value <= 1) joy_digital(input[dev].num, 1 << i, origcode, ev->value, i, (ev->code == input[dev].mmap[SYS_BTN_OSD_KTGL + 1] || ev->code == input[dev].mmap[SYS_BTN_OSD_KTGL + 2]));
-
+							if (ev->value <=1) joy_digital(input[dev].num, mask, origcode, ev->value, i, (ev->code == input[dev].mmap[SYS_BTN_OSD_KTGL + 1] || ev->code == input[dev].mmap[SYS_BTN_OSD_KTGL + 2]));
 							// support 2 simultaneous functions for 1 button if defined in 2 sets. No return.
 						}
 					}
@@ -3293,29 +3460,14 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 				}
 
 				int hrange = (absinfo->maximum - absinfo->minimum) / 2;
-				int dead = hrange/63;
-
-				if (input[sub_dev].quirk == QUIRK_DS3 || input[sub_dev].quirk == QUIRK_DS4)
-				{
-					dead = 10;
-				}
 
 				// normalize to -range/2...+range/2
-				value = value - (absinfo->minimum + absinfo->maximum) / 2;
-
-				if (ev->code > 1 || (!input[dev].lightgun && input[dev].quirk != QUIRK_WHEEL)) //lightgun/wheel has no dead zone
-				{
-					// check the dead-zone and remove it from the range
-					hrange -= dead;
-					if (value < -dead) value += dead;
-					else if (value > dead) value -= dead;
-					else value = 0;
-				}
+				value -= (absinfo->minimum + absinfo->maximum) / 2;
 
 				int range = is_psx() ? 128 : 127;
 				value = (value * range) / hrange;
 
-				//final check to eliminate additive error
+				// final check to eliminate additive error
 				if (value < -range) value = -range;
 				else if (value > 127) value = 127;
 
@@ -3325,14 +3477,14 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 				if (ev->code == (input[dev].mmap[SYS_AXIS_MX] & 0xFFFF) && mouse_emu)
 				{
 					mouse_emu_x = 0;
-					if (value < -1 || value>1) mouse_emu_x = value;
+					if (value < -1 || value > 1) mouse_emu_x = value;
 					mouse_emu_x /= 12;
 					return;
 				}
 				else if (ev->code == (input[dev].mmap[SYS_AXIS_MY] & 0xFFFF) && mouse_emu)
 				{
 					mouse_emu_y = 0;
-					if (value < -1 || value>1) mouse_emu_y = value;
+					if (value < -1 || value > 1) mouse_emu_y = value;
 					mouse_emu_y /= 12;
 					return;
 				}
@@ -3388,7 +3540,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					}
 					else
 					{
-						int offset = (value < -1 || value>1) ? value : 0;
+						int offset = (value < -1 || value > 1) ? value : 0;
 						if (input[dev].stick_l[0] && ev->code == (uint16_t)input[dev].mmap[input[dev].stick_l[0]])
 						{
 							joy_analog(dev, 0, offset, 0);
@@ -3565,6 +3717,7 @@ void mergedevs()
 	make_unique(0x8282, 0x3201, 1);  // Irken Labs JAMMA Expander / Mojo Retro Adapter
 	make_unique(0x1209, 0xFACA, 1);  // ControllaBLE
 	make_unique(0x16D0, 0x127E, 1);  // Reflex Adapt to USB
+	make_unique(0x1209, 0x595A, 1);  // RetroZord adapter
 
 	if (cfg.no_merge_vid)
 	{
@@ -4038,6 +4191,43 @@ static int vcs_proc(int dev, input_event *ev)
 	return 1;
 }
 
+void openfire_signal()
+{
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		if (input[i].vid == 0xf143 && strstr(input[i].name, "OpenFIRE ") &&
+			strstr(input[i].devname, "mouse") == NULL)
+		{
+			// OF generates 3 devices, so just focus on the one actual gamepad slot.
+			char *nameInit = input[i].name;
+			if (memcmp(nameInit+strlen(input[i].name)-5, "Mouse", 5) != 0 && memcmp(nameInit+strlen(input[i].name)-8, "Keyboard", 8) != 0)
+			{
+				char mname[strlen(input[i].name)];
+				strcpy(mname, input[i].name);
+
+				// Cleanup mname to replace offending characters not used in device filepath.
+				char *p;
+				while ((p = strchr(mname, '/'))) *p = '_';
+				while ((p = strchr(mname, ' '))) *p = '_';
+				while ((p = strchr(mname, '*'))) *p = '_';
+				while ((p = strchr(mname, ':'))) *p = '_';
+
+				char devicePath[29+strlen(mname)+strlen(strrchr(input[i].id, '/')+1)];
+				sprintf(devicePath, "/dev/serial/by-id/usb-%s_%s-if00", mname, strrchr(input[i].id, '/')+1);
+
+				FILE *deviceFile = fopen(devicePath, "r+");
+				if(deviceFile == NULL) {
+					printf("Failed to send command to %s: device path doesn't exist?\n", input[i].name);
+				} else {
+					fprintf(deviceFile, "M0x9");
+					printf("%s (device no. %i) set to MiSTer-compatible mode.\n", input[i].name, i);
+					fclose(deviceFile);
+				}
+			}
+		}
+	}
+}
+
 void check_joycon()
 {
 	while (1)
@@ -4232,6 +4422,7 @@ static int rumble_input_device(int devnum, uint16_t strong_mag, uint16_t weak_ma
 		fef = &input[devnum].rumble_effect;
 		fef->type = FF_RUMBLE;
 
+		fef->direction = input[devnum].quirk == QUIRK_WHEEL ? 0x4000 : 0x0000;
 		fef->u.rumble.strong_magnitude = strong_mag;
 		fef->u.rumble.weak_magnitude = weak_mag;
 		fef->replay.length = duration;
@@ -4427,8 +4618,30 @@ static void setup_wheels()
 				}
 			}
 
-			//Namco NeGcon via RetroZord adapter or Reflex Adapt
-			else if ((input[i].vid == 0x2341 && input[i].pid == 0x8036 && strstr(input[i].name, "RZordPsWheel")) ||
+			// Thrustmaster Wheels
+			else if (input[i].vid == 0x044f)
+			{
+				switch (input[i].pid)
+				{
+				case 0xb655: // FGT Rumble 3-in-1 (PC)
+				case 0xb65b: // F430 Cockpit Wireless (PC)
+					input[i].wh_steer = 0;
+					input[i].wh_accel = 5;
+					input[i].wh_brake = 1;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+				case 0xb66e: // T300RS Racing Wheel (PC/PS3)
+					input[i].wh_steer = 0;
+					input[i].wh_accel = 5;
+					input[i].wh_brake = 1;
+					input[i].wh_clutch = 6;
+					input[i].quirk = QUIRK_WHEEL;
+					break;
+				}
+			}
+
+			//Namco NeGcon via Arduino, RetroZord or Reflex Adapt
+			else if (((input[i].vid == 0x2341 || (input[i].vid == 0x1209 && input[i].pid == 0x595A)) && strstr(input[i].name, "RZordPsWheel")) ||
 					 (input[i].vid == 0x16D0 && input[i].pid == 0x127E && strstr(input[i].name, "ReflexPSWheel")))
 			{
 				input[i].wh_accel = 6;
@@ -4665,8 +4878,8 @@ int input_test(int getchar)
 							input[n].lightgun = 1;
 						}
 
-						//Namco Guncon via RetroZord adapter or Reflex Adapt
-						if ((input[n].vid == 0x2341 && input[n].pid == 0x8036 && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun"))) ||
+						//Namco Guncon via Arduino, RetroZord or Reflex Adapt
+						if (((input[n].vid == 0x2341 || (input[n].vid == 0x1209 && input[n].pid == 0x595A)) && (strstr(uniq, "RZordPsGun") || strstr(input[n].name, "RZordPsGun"))) ||
 							(input[n].vid == 0x16D0 && input[n].pid == 0x127E && (strstr(uniq, "ReflexPSGun") || strstr(input[n].name, "ReflexPSGun"))))
 						{
 							input[n].quirk = QUIRK_LIGHTGUN;
@@ -4714,6 +4927,64 @@ int input_test(int getchar)
 							input_lightgun_load(n);
 						}
 
+						//OpenFIRE Lightgun
+						//!Note that OF has a user-configurable PID, but the VID is reserved and every device name has the prefix "OpenFIRE"
+						if (input[n].vid == 0xf143 && strstr(input[n].name, "OpenFIRE "))
+						{
+							// OF generates 3 devices, so just focus on the one actual gamepad slot.
+							char *nameInit = input[n].name;
+							if(memcmp(nameInit+strlen(input[n].name)-5, "Mouse", 5) != 0 && memcmp(nameInit+strlen(input[n].name)-8, "Keyboard", 8) != 0)
+							{
+								input[n].quirk = QUIRK_LIGHTGUN;
+								input[n].lightgun = 1;
+								input[n].guncal[0] = -32767;
+								input[n].guncal[1] = 32767;
+								input[n].guncal[2] = -32767;
+								input[n].guncal[3] = 32767;
+								input_lightgun_load(n);
+							}
+						}
+
+						//Blamcon Lightgun
+						if (input[n].vid == 0x3673 && ((input[n].pid >= 0x0100 && input[n].pid <= 0x0103) || (input[n].pid >= 0x0200 && input[n].pid <= 0x0203)))
+						{
+							input[n].quirk = QUIRK_LIGHTGUN;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = 0;
+							input[n].guncal[1] = 32767;
+							input[n].guncal[2] = 0;
+							input[n].guncal[3] = 32767;
+							input_lightgun_load(n);
+						}
+
+						//Retroshooter
+						if (input[n].vid == 0x0483 && input[n].pid >= 0x5750 && input[n].pid <= 0x5753)
+						{
+							input[n].quirk = QUIRK_LIGHTGUN_MOUSE;
+							input[n].lightgun = 1;
+							input[n].guncal[0] = 0;
+							input[n].guncal[1] = 767;
+							input[n].guncal[2] = 0;
+							input[n].guncal[3] = 1023;
+							input_lightgun_load(n);
+						}
+
+						//Sinden Lightgun (two different PIDs, four different PIDs depending on gun color/config)                                                                                                   
+						if ((input[n].vid == 0x16c0 || input[n].vid == 0x16d0) && (                             
+            					input[n].pid == 0x0f01 ||                             
+            					input[n].pid == 0x0f02 ||                             
+            					input[n].pid == 0x0f38 ||                             
+            					input[n].pid == 0x0f39))                             
+						{                             
+    							input[n].quirk = QUIRK_LIGHTGUN;                             
+    							input[n].lightgun = 1;                             
+    							input[n].guncal[0] = 0;                             
+    							input[n].guncal[1] = 65535;                             
+    							input[n].guncal[2] = 0;                             
+    							input[n].guncal[3] = 65535;                             
+    							input_lightgun_load(n);                             
+						} 
+
 						//Madcatz Arcade Stick 360
 						if (input[n].vid == 0x0738 && input[n].pid == 0x4758) input[n].quirk = QUIRK_MADCATZ360;
 
@@ -4754,7 +5025,8 @@ int input_test(int getchar)
 
 						//Arduino and Teensy devices may share the same VID:PID, so additional field UNIQ is used to differentiate them
 						//Reflex Adapt also uses the UNIQ field to differentiate between device modes
-						if ((input[n].vid == 0x2341 || (input[n].vid == 0x16C0 && (input[n].pid>>8) == 0x4) || (input[n].vid == 0x16D0 && input[n].pid == 0x127E)) && strlen(uniq))
+						//RetroZord Adapter also uses the UNIQ field to differentiate between device modes
+						if ((input[n].vid == 0x2341 || (input[n].vid == 0x16C0 && (input[n].pid>>8) == 0x4) || (input[n].vid == 0x16D0 && input[n].pid == 0x127E) || (input[n].vid == 0x1209 && input[n].pid == 0x595A)) && strlen(uniq))
 						{
 							snprintf(input[n].idstr, sizeof(input[n].idstr), "%04x_%04x_%s", input[n].vid, input[n].pid, uniq);
 							char *p;
@@ -4790,11 +5062,13 @@ int input_test(int getchar)
 
 			mergedevs();
 			check_joycon();
+			openfire_signal();
 			setup_wheels();
 			for (int i = 0; i < n; i++)
 			{
 				printf("opened %d(%2d): %s (%04x:%04x:%08x) %d \"%s\" \"%s\"\n", i, input[i].bind, input[i].devname, input[i].vid, input[i].pid, input[i].unique_hash, input[i].quirk, input[i].id, input[i].name);
 				restore_player(i);
+				setup_deadzone(&ev, i);
 			}
 			unflag_players();
 		}
@@ -5212,7 +5486,7 @@ int input_test(int getchar)
 									}
 								}
 
-								if (ev.type == EV_ABS && input[i].quirk == QUIRK_LIGHTGUN)
+								if (ev.type == EV_ABS && (input[i].quirk == QUIRK_LIGHTGUN || input[i].quirk == QUIRK_LIGHTGUN_MOUSE))
 								{
 									menu_lightgun_cb(i, ev.type, ev.code, ev.value);
 
@@ -5284,7 +5558,7 @@ int input_test(int getchar)
 
 								if (ev.type == EV_KEY && user_io_osd_is_visible())
 								{
-									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN)
+									if (input[i].quirk == QUIRK_WIIMOTE || input[i].quirk == QUIRK_LIGHTGUN_CRT || input[i].quirk == QUIRK_LIGHTGUN || input[i].quirk == QUIRK_LIGHTGUN_MOUSE)
 									{
 										if (menu_lightgun_cb(i, ev.type, ev.code, ev.value)) continue;
 									}
@@ -5299,7 +5573,7 @@ int input_test(int getchar)
 
 								if (!noabs) input_cb(&ev, &absinfo, i);
 
-								//sumulate digital directions from analog
+								// simulate digital directions from analog
 								if (ev.type == EV_ABS && !(mapping && mapping_type <= 1 && mapping_button < -4) && !(ev.code <= 1 && input[dev].lightgun) && input[dev].quirk != QUIRK_PDSP && input[dev].quirk != QUIRK_MSSP)
 								{
 									input_absinfo *pai = 0;
@@ -5516,7 +5790,7 @@ int input_poll(int getchar)
 
 	static int af[NUMPLAYERS] = {};
 	static uint32_t time[NUMPLAYERS] = {};
-	static uint32_t joy_prev[NUMPLAYERS] = {};
+	static uint64_t joy_prev[NUMPLAYERS] = {};
 
 	int ret = input_test(getchar);
 	if (getchar) return ret;
@@ -5554,29 +5828,32 @@ int input_poll(int getchar)
 	{
 		for (int i = 0; i < NUMPLAYERS; i++)
 		{
+			int send = 0;
 			if (af_delay[i] < AF_MIN) af_delay[i] = AF_MIN;
 
-			if (!time[i]) time[i] = GetTimer(af_delay[i]);
-			int send = 0;
-
-			int newdir = ((joy[i] & 0xF) != (joy_prev[i] & 0xF));
-			if (joy[i] != joy_prev[i])
+			/* Autofire handler */
+			if (joy[i] & autofire[i])
 			{
-				if ((joy[i] ^ joy_prev[i]) & autofire[i])
+				if (!time[i]) time[i] = GetTimer(af_delay[i]);
+				else if ((joy[i] ^ joy_prev[i]) & autofire[i])
 				{
 					time[i] = GetTimer(af_delay[i]);
 					af[i] = 0;
 				}
-
-				send = 1;
-				joy_prev[i] = joy[i];
+				else if (CheckTimer(time[i]))
+				{
+					time[i] = GetTimer(af_delay[i]);
+					af[i] = !af[i];
+					send = 1;
+				}
 			}
 
-			if (CheckTimer(time[i]))
+			int newdir = ((((uint32_t)(joy[i]) | (uint32_t)(joy[i] >> 32)) & 0xF) != (((uint32_t)(joy_prev[i]) | (uint32_t)(joy_prev[i] >> 32)) & 0xF));
+
+			if (joy[i] != joy_prev[i])
 			{
-				time[i] = GetTimer(af_delay[i]);
-				af[i] = !af[i];
-				if (joy[i] & autofire[i]) send = 1;
+				joy_prev[i] = joy[i];
+				send = 1;
 			}
 
 			if (send)

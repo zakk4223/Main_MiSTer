@@ -77,7 +77,7 @@ static VideoInfo current_video_info;
 
 static int support_FHD = 0;
 
-yc_mode yc_modes[10];
+yc_mode yc_modes[20];
 
 struct vrr_cap_t
 {
@@ -310,7 +310,7 @@ struct ScalerFilter
 	char filename[1023];
 };
 
-static ScalerFilter scaler_flt[3];
+static ScalerFilter scaler_flt[4];
 
 struct FilterPhase
 {
@@ -336,7 +336,7 @@ struct VideoFilter
 	VideoFilterDigest digest;
 };
 
-static VideoFilter scaler_flt_data[3];
+static VideoFilter scaler_flt_data[4];
 
 static bool scale_phases(FilterPhase out_phases[N_PHASES], FilterPhase *in_phases, int in_count)
 {
@@ -539,6 +539,7 @@ static void set_vfilter(int force)
 {
 	PROFILE_FUNCTION();
 
+
 	static int last_flags = 0;
 
 	int flt_flags = spi_uio_cmd_cont(UIO_SET_FLTNUM);
@@ -555,7 +556,7 @@ static void set_vfilter(int force)
 	DisableIO();
 
 	int vert_flt;
-	if (current_video_info.interlaced) vert_flt = VFILTER_HORZ;
+	if (current_video_info.interlaced) vert_flt = scaler_flt[VFILTER_ILACE].mode ? VFILTER_ILACE : VFILTER_HORZ;
 	else if ((flt_flags & 0x30) && scaler_flt[VFILTER_SCAN].mode) vert_flt = VFILTER_SCAN;
 	else if (scaler_flt[VFILTER_VERT].mode) vert_flt = VFILTER_VERT;
 	else vert_flt = VFILTER_HORZ;
@@ -666,11 +667,18 @@ static void loadScalerCfg()
 			strcpy(scaler_flt[VFILTER_SCAN].filename, cfg.vfilter_scanlines_default);
 			scaler_flt[VFILTER_SCAN].mode = 1;
 		}
+
+		if (cfg.vfilter_interlace_default[0])
+		{
+			strcpy(scaler_flt[VFILTER_ILACE].filename, cfg.vfilter_interlace_default);
+			scaler_flt[VFILTER_ILACE].mode = 1;
+		}
 	}
 
 	if (!read_video_filter(VFILTER_HORZ, &scaler_flt_data[VFILTER_HORZ])) memset(&scaler_flt[VFILTER_HORZ], 0, sizeof(scaler_flt[VFILTER_HORZ]));
 	if (!read_video_filter(VFILTER_VERT, &scaler_flt_data[VFILTER_VERT])) memset(&scaler_flt[VFILTER_VERT], 0, sizeof(scaler_flt[VFILTER_VERT]));
 	if (!read_video_filter(VFILTER_SCAN, &scaler_flt_data[VFILTER_SCAN])) memset(&scaler_flt[VFILTER_SCAN], 0, sizeof(scaler_flt[VFILTER_SCAN]));
+	if (!read_video_filter(VFILTER_ILACE, &scaler_flt_data[VFILTER_ILACE])) memset(&scaler_flt[VFILTER_ILACE], 0, sizeof(scaler_flt[VFILTER_ILACE]));
 }
 
 static char active_gamma_cfg[1024] = { 0 };
@@ -1052,6 +1060,11 @@ void video_loadPreset(char *name, bool save)
 				load_flt_pres(line + 8, VFILTER_SCAN);
 				scaler_dirty = true;
 			}
+			else if (!strncasecmp(line, "ifilter=", 8))
+			{
+				load_flt_pres(line + 8, VFILTER_ILACE);
+				scaler_dirty = true;
+			}
 			else if (!strncasecmp(line, "mask=", 5))
 			{
 				mask_dirty = true;
@@ -1408,15 +1421,16 @@ static void hdmi_config_init()
 
 		0x17, 0b01100010,		// Aspect ratio 16:9 [1]=1, 4:3 [1]=0, invert sync polarity
 
-		0x3B, 0x0,              // Automatic pixel repetition and VIC detection
-
+		0x3B, 0x80,             // Automatic pixel repetition and VIC detection
+		0x3C, 0x00,
 
 		0x48, 0b00001000,       // [6]=0 Normal bus order!
 								// [5] DDR Alignment.
 								// [4:3] b01 Data right justified (for YCbCr 422 input modes).
 
 		0x49, 0xA8,				// ADI required Write.
-		0x4A, 0b10000000, //Auto-Calculate SPD checksum
+		0x40, 0x00,
+		0x4A, 0b10000000,		//Auto-Calculate SPD checksum
 		0x4C, 0x00,				// ADI required Write.
 
 		0x55, (uint8_t)(cfg.hdmi_game_mode ? 0b00010010 : 0b00010000),
@@ -1525,6 +1539,90 @@ static void hdmi_config_init()
 
 	hdmi_config_set_csc();
 }
+
+static void spd_config(uint8_t *data)
+{
+	int fd = i2c_open(0x38, 0);
+	if (fd >= 0)
+	{
+		int res;
+		hdmi_config_set_spd(1);
+
+		res = i2c_smbus_write_byte_data(fd, 0x1F, 0x80);
+		if (res < 0)
+		{
+			printf("i2c: Couldn't update SPD change register (0x1F, 0x80) %d\n", res);
+		}
+		else
+		{
+			for (int i = 0; i < 31; i++)
+			{
+				res = i2c_smbus_write_byte_data(fd, i, data[i]);
+				if (res < 0) printf("i2c: SPD register write error (%02X %02x): %d\n", i, data[i], res);
+			}
+
+			res = i2c_smbus_write_byte_data(fd, 0x1F, 0x00);
+			if (res < 0) printf("i2c: Couldn't update SPD change register (0x1F, 0x00), %d\n", res);
+		}
+		i2c_close(fd);
+	}
+	else
+	{
+		hdmi_config_set_spd(0);
+	}
+}
+
+static void spd_config_dv()
+{
+	VideoInfo *vi = &current_video_info;
+
+	uint8_t data[32] = {
+		0x83, 0x01, 25, 0,
+		'D', 'V', '1' /* version */,
+		(uint8_t)((vi->interlaced ? 1 : 0) | (menu_present() ? 4 : 0)),
+		(uint8_t)(vi->pixrep ? vi->pixrep : (vi->ctime / vi->width)),
+		(uint8_t)vi->de_h,
+		(uint8_t)(vi->de_h >> 8),
+		(uint8_t)vi->de_v,
+		(uint8_t)(vi->de_v >> 8),
+		(uint8_t)vi->width,
+		(uint8_t)(vi->width >> 8),
+		(uint8_t)vi->height,
+		(uint8_t)(vi->height >> 8)
+	};
+
+	char *name = user_io_get_core_name2();
+	for (int i = 17; i < 32; i++)
+	{
+		if (!*name) break;
+		data[i] = (uint8_t)(*name);
+		name++;
+	}
+
+	spd_config(data);
+}
+
+/*
+static void spd_config_hdmi()
+{
+	uint8_t data[32] = {
+		0x83, 0x01, 25, 0,
+		'M', 'i', 'S', 'T', 'e', 'r', 0, 0,
+	};
+
+	char *name = user_io_get_core_name();
+	for (int i = 12; i < 27; i++)
+	{
+		if (!*name) break;
+		data[i] = (uint8_t)(*name);
+		name++;
+	}
+
+	data[27] = 8; // GAME
+
+	spd_config(data);
+}
+*/
 
 static void hdmi_config_set_hdr()
 {
@@ -2445,6 +2543,7 @@ int hasAPI1_5()
 static bool get_video_info(bool force, VideoInfo *video_info)
 {
 	static uint16_t nres = 0;
+	static bool vi_seen = false;
 	bool res_changed = false;
 	bool fb_changed = false;
 
@@ -2452,8 +2551,10 @@ static bool get_video_info(bool force, VideoInfo *video_info)
 	uint16_t res = spi_w(0);
 	if ((nres != res) || force)
 	{
+
 		res_changed = (nres != res);
 		nres = res;
+		if (res_changed) vi_seen = true;
 		video_info->width = spi_w(0) | (spi_w(0) << 16);
 		video_info->height = spi_w(0) | (spi_w(0) << 16);
 		video_info->htime = spi_w(0) | (spi_w(0) << 16);
@@ -2461,6 +2562,9 @@ static bool get_video_info(bool force, VideoInfo *video_info)
 		video_info->ptime = spi_w(0) | (spi_w(0) << 16);
 		video_info->vtimeh = spi_w(0) | (spi_w(0) << 16);
 		video_info->ctime = spi_w(0) | (spi_w(0) << 16);
+		video_info->pixrep = spi_w(0);
+		video_info->de_h = spi_w(0);
+		video_info->de_v = spi_w(0);
 		video_info->interlaced = ( res & 0x100 ) != 0;
 		video_info->rotated = ( res & 0x200 ) != 0;
 	}
@@ -2487,7 +2591,7 @@ static bool get_video_info(bool force, VideoInfo *video_info)
 	}
 	DisableIO();
 
-	return res_changed || fb_changed;
+	return vi_seen && (res_changed || fb_changed);
 }
 
 static void video_core_description(const VideoInfo *vi, const vmode_custom_t */*vm*/, char *str, size_t len)
@@ -2558,6 +2662,7 @@ static void show_video_info(const VideoInfo *vi, const vmode_custom_t *vm)
 
 	printf("\033[1;33mINFO: Video resolution: %u x %u%s, fHorz = %.1fKHz, fVert = %.1fHz, fPix = %.2fMHz, fVid = %.2fMHz\033[0m\n",
 		vi->width, vi->height, vi->interlaced ? "i" : "", hrate, vrate, prate, crate);
+	printf("\033[1;33mINFO: pr = %d, de_h = %d, de_v = %d\033[0m\n", vi->pixrep, vi->de_h, vi->de_v);
 	printf("\033[1;33mINFO: Frame time (100MHz counter): VGA = %d, HDMI = %d\033[0m\n", vi->vtime, vi->vtimeh);
 	printf("\033[1;33mINFO: AR = %d:%d, fb_en = %d, fb_width = %d, fb_height = %d\033[0m\n", vi->arx, vi->ary, vi->fb_en, vi->fb_width, vi->fb_height);
 	if (vi->vtimeh) api1_5 = 1;
@@ -2759,6 +2864,9 @@ static void set_yc_mode()
 		double CLK_REF = (pal || (cfg.ntsc_mode == 1)) ? 4.43361875f : (cfg.ntsc_mode == 2) ? 3.575611f : 3.579545f;
 		double CLK_VIDEO = current_video_info.ctime * 100.f / current_video_info.ptime;
 
+		float prate = current_video_info.width * 100.f;
+		prate /= current_video_info.ptime;
+
 		int64_t PHASE_INC = ((int64_t)((CLK_REF / CLK_VIDEO) * 1099511627776LL)) & 0xFFFFFFFFFFLL;
 
 		int COLORBURST_START = (int)(3.7f * (CLK_VIDEO / CLK_REF));
@@ -2766,12 +2874,14 @@ static void set_yc_mode()
 		int COLORBURST_RANGE = (COLORBURST_START << 10) | COLORBURST_END;
 
 		char yc_key[64];
+		char yc_key_expand[64];
 		sprintf(yc_key, "%s_%.1f%s%s", user_io_get_core_name(1), fps, current_video_info.interlaced ? "i" : "", (pal || !cfg.ntsc_mode) ? "" : (cfg.ntsc_mode == 1) ? "s" : "m");
+		snprintf(yc_key_expand, sizeof(yc_key_expand), "%s_%.2f", yc_key, prate);
 		printf("Calculated YC parameters for '%s': %s PHASE_INC=%lld, COLORBURST_START=%d, COLORBURST_END=%d\n", yc_key, pal ? "PAL" : (cfg.ntsc_mode == 1) ? "PAL60" : (cfg.ntsc_mode == 2) ? "PAL-M" : "NTSC", PHASE_INC, COLORBURST_START, COLORBURST_END);
 
 		for (uint i = 0; i < sizeof(yc_modes) / sizeof(yc_modes[0]); i++)
 		{
-			if (!strcasecmp(yc_modes[i].key, yc_key))
+		if (!strcasecmp(yc_modes[i].key, yc_key) || !strcasecmp(yc_modes[i].key, yc_key_expand))
 			{
 				printf("Override YC PHASE_INC with value: %lld\n", yc_modes[i].phase_inc);
 				PHASE_INC = yc_modes[i].phase_inc;
@@ -2807,8 +2917,18 @@ void video_mode_adjust()
 		current_video_info = video_info;
 		show_video_info(&video_info, &v_cur);
 		set_yc_mode();
+		if (cfg.direct_video) spd_config_dv();
+		//else if(use_vrr != VRR_FREESYNC) spd_config_hdmi();
 	}
 	force = false;
+
+	if (cfg.direct_video)
+	{
+		static int menu = 0;
+		int menu_now = menu_present();
+		if(menu != menu_now) spd_config_dv();
+		menu = menu_now;
+	}
 
 	if (vid_changed && !is_menu())
 	{
@@ -3225,7 +3345,7 @@ static char *get_file_fromdir(const char* dir, int num, int *count)
 		while (de)
 		{
 			int len = strlen(de->d_name);
-			if (len > 4 && (!strcasecmp(de->d_name + len - 4, ".png") || !strcasecmp(de->d_name + len - 4, ".jpg")))
+			if (len > 4 && (de->d_name[0] != '.') && (!strcasecmp(de->d_name + len - 4, ".png") || !strcasecmp(de->d_name + len - 4, ".jpg")))
 			{
 				if (num == cnt) break;
 				cnt++;
@@ -3818,3 +3938,12 @@ static void video_calculate_cvt(int h_pixels, int v_lines, float refresh_rate, i
 		video_calculate_cvt_int(h_pixels, v_lines, refresh_rate, 1, vmode);
 	}
 }
+
+
+
+int video_get_rotated()
+{
+  return current_video_info.rotated;
+}
+
+

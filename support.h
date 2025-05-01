@@ -19,6 +19,10 @@
 // SNES  support
 #include "support/snes/snes.h"
 
+// N64  support
+#include "support/n64/n64.h"
+#include "support/n64/n64_joy_emu.h"
+
 // NeoGeo  support
 #include "support/neogeo/neogeo_loader.h"
 #include "support/neogeo/neogeocd.h"
@@ -38,6 +42,9 @@
 
 // PSX support
 #include "support/psx/psx.h"
+
+// CD-i support
+#include "support/cdi/cdi.h"
 
 // UEF support
 #include "support/uef/uef_reader.h"
