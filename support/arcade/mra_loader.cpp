@@ -43,6 +43,7 @@ struct arc_struct {
 	int ito;
 	int imap;
   int ibmap;
+  int slice_cnt;
   int resetinterleave;
 	int file_size;
 	uint32_t address;
@@ -248,7 +249,7 @@ static uint8_t rearrange_data_byte(const uint8_t data_byte, int bitmap)
 
 
 }
-static int rom_data(const uint8_t *buf, int chunk, int map, int bmap, int resetinterleave, struct MD5Context *md5context)
+static int rom_data(const uint8_t *buf, int chunk, int map, int bmap, int slice_cnt, int resetinterleave, struct MD5Context *md5context)
 {
 	uint8_t offsets[8]; // assert (unitlen <= 8)
 	int bytes_in_iter = 0;
@@ -286,12 +287,33 @@ static int rom_data(const uint8_t *buf, int chunk, int map, int bmap, int reseti
 		map_reg >>= 4;
 	}
 
+  uint8_t slice_mask = 0xFF;
+  uint8_t slice_shift = 0;
+  if (slice_cnt == 8)
+  {
+    slice_mask = 0x1;
+    slice_shift = 1;
+  } else if (slice_cnt == 4) {
+    slice_mask = 0x3;
+    slice_shift = 2;
+  } else if (slice_cnt == 2) {
+    slice_mask = 0xF;
+    slice_shift = 4;
+  }
 	while (chunk)
 	{
+    uint8_t bytedata = 0;
 		for (int i = 0; i < bytes_in_iter; i++)
 		{
-			*(romdata + romlen[idx] + offsets[i]) |= rearrange_data_byte(*buf++, bmap);
-			chunk--;
+      bytedata = *buf;
+      uint8_t slicedata = (bytedata >> ((i%slice_cnt)*slice_shift)) & slice_mask;
+      uint8_t swappeddata = rearrange_data_byte(slicedata, bmap); 
+			*(romdata + romlen[idx] + offsets[i]) |= swappeddata;
+      if (slice_cnt == 0 || !((i+1)%slice_cnt))
+      {
+        buf++;
+			  chunk--;
+      }
 		}
 		romlen[idx] += unitlen;
 	}
@@ -299,7 +321,7 @@ static int rom_data(const uint8_t *buf, int chunk, int map, int bmap, int reseti
 	return 1;
 }
 
-static int rom_file(const char *name, uint32_t crc32, int start, int len, int map, int bmap, int resetinterleave, struct MD5Context *md5context)
+static int rom_file(const char *name, uint32_t crc32, int start, int len, int map, int bmap, int slice_cnt, int resetinterleave, struct MD5Context *md5context)
 {
 	fileTYPE f = {};
 	static uint8_t buf[8192];
@@ -314,7 +336,7 @@ static int rom_file(const char *name, uint32_t crc32, int start, int len, int ma
 		uint16_t chunk = (bytes2send > sizeof(buf)) ? sizeof(buf) : bytes2send;
 
 		FileReadAdv(&f, buf, chunk);
-		if (!rom_data(buf, chunk, map, bmap,  resetinterleave && doreset, md5context))
+		if (!rom_data(buf, chunk, map, bmap, slice_cnt, resetinterleave && doreset, md5context))
 		{
 			FileClose(&f);
 			return 0;
@@ -498,6 +520,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 			arc_info->ito = 0;
 			arc_info->imap = 0;
       arc_info->ibmap = 0;
+      arc_info->slice_cnt = 1;
       arc_info->resetinterleave = 0;
 			arc_info->zipname[0] = 0;
 			arc_info->address = 0;
@@ -523,6 +546,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 			arc_info->ito = 0;
 			arc_info->imap = 0;
 			arc_info->ibmap = 0;
+      arc_info->slice_cnt = 1;
       arc_info->resetinterleave = 0;
 		}
 
@@ -532,6 +556,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 			arc_info->partzipname[0] = 0;
 			arc_info->imap = 0;
 			arc_info->ibmap = 0;
+      arc_info->slice_cnt = 1;
       arc_info->resetinterleave = 0;
 		}
 
@@ -625,6 +650,11 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 				if (!strcasecmp(node->attributes[i].name, "bitmap") && !strcasecmp(node->tag, "part"))
 				{
 					arc_info->ibmap = strtoul(node->attributes[i].value, NULL, 16);
+				}
+
+				if (!strcasecmp(node->attributes[i].name, "slice") && !strcasecmp(node->tag, "part"))
+				{
+					arc_info->slice_cnt = strtoul(node->attributes[i].value, NULL, 10);
 				}
 
 				if (!strcasecmp(node->attributes[i].name, "map") && !strcasecmp(node->tag, "part"))
@@ -798,6 +828,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 				arc_info->ito = 0;
 				arc_info->imap = 0;
 				arc_info->ibmap = 0;
+        arc_info->slice_cnt = 1;
         arc_info->resetinterleave = 0;
 				unitlen = 1;
 			}
@@ -936,7 +967,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 
 					for (int i = 0; i < repeat; i++)
 					{
-						result = rom_file(fname, crc32, start, length, arc_info->imap, arc_info->ibmap, arc_info->resetinterleave,  &arc_info->context);
+						result = rom_file(fname, crc32, start, length, arc_info->imap, arc_info->ibmap, arc_info->slice_cnt, arc_info->resetinterleave,  &arc_info->context);
 
 						// we should check file not found error for the zip
 						if (result == 0)
@@ -964,7 +995,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 				printf("data: ");
 				if (binary)
 				{
-					for (int i = 0; i < repeat; i++) rom_data(binary, len, arc_info->imap, arc_info->ibmap, arc_info->resetinterleave,  &arc_info->context);
+					for (int i = 0; i < repeat; i++) rom_data(binary, len, arc_info->imap, arc_info->ibmap, arc_info->slice_cnt, arc_info->resetinterleave,  &arc_info->context);
 					free(binary);
 				}
 				printf("%d(0x%X) bytes from xml\n", romlen[0] - prev_len, romlen[0] - prev_len);
@@ -1024,6 +1055,7 @@ static int xml_send_rom(XMLEvent evt, const XMLNode* node, SXML_CHAR* text, cons
 			arc_info->ito = 0;
 			arc_info->imap = 0;
 			arc_info->ibmap = 0;
+      arc_info->slice_cnt = 1;
       arc_info->resetinterleave = 0;
 			unitlen = 1;
 			arc_info->insideinterleave = 0;
