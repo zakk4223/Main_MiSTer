@@ -17,6 +17,10 @@
 #include <sys/types.h>
 #include <stdarg.h>
 #include <math.h>
+#include <libudev.h>
+#include <linux/usbdevice_fs.h>
+#include <linux/usb/ch9.h>
+
 
 #include "input.h"
 #include "user_io.h"
@@ -1128,6 +1132,7 @@ enum QUIRK
 	QUIRK_LIGHTGUN,
 	QUIRK_LIGHTGUN_MOUSE,
 	QUIRK_WHEEL,
+	QUIRK_NINTENDO_SW2,
 };
 
 typedef struct
@@ -4278,6 +4283,138 @@ void check_joycon()
 		else break;
 	}
 }
+static int find_bulk_out_endpoint(int fd, int interface_num, unsigned char *ep_addr) {
+    struct usb_device_descriptor dev_desc;
+    struct usb_config_descriptor config_desc;
+    struct usb_interface_descriptor intf_desc;
+    struct usb_endpoint_descriptor ep_desc;
+    
+    // Get device descriptor
+    if (read(fd, &dev_desc, sizeof(dev_desc)) != sizeof(dev_desc)) {
+        perror("read device descriptor");
+        return -1;
+    }
+    lseek(fd, 0, SEEK_SET);
+    
+    // Get configuration descriptor
+    unsigned char config_buf[4096];
+    if (read(fd, config_buf, sizeof(config_buf)) < sizeof(config_desc)) {
+        perror("read config descriptor");
+        return -1;
+    }
+    
+    memcpy(&config_desc, config_buf, sizeof(config_desc));
+    
+    // Parse through the configuration to find our interface
+    unsigned char *ptr = config_buf + sizeof(config_desc);
+    unsigned char *end = config_buf + config_desc.wTotalLength;
+    
+    while (ptr < end) {
+        struct usb_descriptor_header *hdr = (struct usb_descriptor_header *)ptr;
+        
+        if (hdr->bDescriptorType == USB_DT_INTERFACE) {
+            memcpy(&intf_desc, ptr, sizeof(intf_desc));
+            
+            if (intf_desc.bInterfaceNumber == interface_num) {
+                // Found our interface, now look for bulk OUT endpoints
+                ptr += hdr->bLength;
+                
+                for (int i = 0; i < intf_desc.bNumEndpoints; i++) {
+                    if (ptr + sizeof(ep_desc) > end) break;
+                    
+                    hdr = (struct usb_descriptor_header *)ptr;
+                    if (hdr->bDescriptorType == USB_DT_ENDPOINT) {
+                        memcpy(&ep_desc, ptr, sizeof(ep_desc));
+                        
+                        // Check if it's bulk OUT
+                        if ((ep_desc.bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == USB_ENDPOINT_XFER_BULK &&
+                            (ep_desc.bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_OUT) {
+                            *ep_addr = ep_desc.bEndpointAddress;
+                            return 0;  // Found it!
+                        }
+                    }
+                    ptr += hdr->bLength;
+                }
+                return -1;  // Interface found but no bulk OUT endpoint
+            }
+        }
+        ptr += hdr->bLength;
+    }
+    
+    return -1;  // Interface not found
+}
+
+static void wakeup_switch2_controllers()
+{
+	struct udev *udev = udev_new();
+	if (!udev)
+		return;
+	for (int i = 0; i < NUMDEV; i++)
+	{
+		if (input[i].quirk != QUIRK_NINTENDO_SW2)
+			continue;
+
+		//Unfortunately it is easier to use libudev to find the base USB device
+		//otherwise you have to search up through /sys nodes until you find it.
+
+		struct udev_device *device, *parent_usb;
+		const char *usb_path;
+
+		char syspath[512] = {0};
+
+		snprintf(syspath, sizeof(syspath), "/sys%s", input[i].sysfs); 
+		device = udev_device_new_from_syspath(udev,  syspath);
+		if (!device)
+			continue;
+
+		parent_usb = udev_device_get_parent_with_subsystem_devtype(device, "usb", "usb_device");
+		if (!parent_usb)
+		{
+			udev_device_unref(device);
+			continue;
+		}
+
+		usb_path = udev_device_get_devnode(parent_usb);
+
+
+		int fd = open(usb_path, O_RDWR);
+		udev_device_unref(device);
+
+
+
+		if (fd < 0)
+			continue;
+
+		unsigned char bulk_out_ep;
+
+		if (find_bulk_out_endpoint(fd, 1, &bulk_out_ep) == 0) {
+			unsigned char magic_buf[] = {0x03, 0x91, 0x00, 0x0D, 0x00, 0x08, 0x00, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+			struct usbdevfs_bulktransfer bulk = {
+				.ep = bulk_out_ep,
+				.len = sizeof(magic_buf),
+				.timeout = 1000,
+				.data = magic_buf
+			};
+
+			ioctl(fd, USBDEVFS_BULK, &bulk);
+		}
+
+		close(fd);
+	}
+	udev_unref(udev);
+}
+
+static void process_nsw2(int dev, input_event *ev, input_absinfo *absinfo)
+{
+	if (ev->type == EV_ABS)
+	{
+		if (ev->code == 1 || ev->code == 5)
+		{
+			ev->value = absinfo->maximum - (ev->value - absinfo->minimum); 
+		}
+	}
+}
+
 
 int process_joycon(int dev, input_event *ev, input_absinfo *absinfo)
 {
@@ -4861,6 +4998,11 @@ int input_test(int getchar)
 							}
 						}
 
+						if (input[n].vid == 0x057e && (input[n].pid == 0x2066 || input[n].pid == 0x2067 || input[n].pid == 0x2069 || input[n].pid == 0x2073))
+						{
+							input[n].quirk = QUIRK_NINTENDO_SW2;
+						}
+
 						if (input[n].vid == 0x057e && input[n].pid == 0x2006)
 						{
 							input[n].misc_flags = 1 << 30;
@@ -5063,6 +5205,7 @@ int input_test(int getchar)
 			mergedevs();
 			check_joycon();
 			openfire_signal();
+			wakeup_switch2_controllers();
 			setup_wheels();
 			for (int i = 0; i < n; i++)
 			{
@@ -5338,6 +5481,11 @@ int input_test(int getchar)
 											break;
 										}
 									}
+								}
+
+								if (input[i].quirk == QUIRK_NINTENDO_SW2)
+								{
+									process_nsw2(i, &ev, &absinfo);
 								}
 
 								if (input[i].quirk == QUIRK_JOYCON)
