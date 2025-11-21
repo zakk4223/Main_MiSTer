@@ -1210,7 +1210,6 @@ typedef struct
 	advancedButtonMap advanced_map[ADVANCED_MAP_MAX];
 	advancedButtonState advanced_state[ADVANCED_MAP_MAX];
 	bool has_advanced_map;
-	bool is_keyboard;
 } devInput;
 
 static devInput input[NUMDEV] = {};
@@ -1407,22 +1406,12 @@ static int mapping_set;
 
 static int mapping_current_key = 0;
 static int mapping_current_dev = -1;
-
 static uint16_t *mapping_store = NULL;
-
-
-static int last_input_dev = 1<<31;
-
 
 static uint32_t tmp_axis[4];
 static int tmp_axis_n = 0;
 
 static int grabbed = 1;
-
-int get_last_input_dev()
-{
-	return last_input_dev;
-}
 
 static uint32_t osd_timer = 0;
 
@@ -2871,7 +2860,6 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			}
 			if ((ev->code == (input[mapping_dev].mmap[SYS_BTN_MENU_FUNC] & 0xFFFF) || ev->code == KEY_TAB) && mapping_button == 1)
 			{
-
 				osd_timer = GetTimer(5000);
 				mapping_finish = 3;
 			}
@@ -2885,8 +2873,8 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			mapping_finish = 2;
 		}
 		return;
-
 	}
+
 	if (mapping && (mapping_dev >= 0 || ev->value)
 		&& !((mapping_type < 2 || !mapping_button) && (cancel || enter))
 		&& input[dev].quirk != QUIRK_PDSP
@@ -3213,7 +3201,6 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		{
 		case EV_KEY:
 
-			if (!menu_event) last_input_dev = sub_dev;
 			//joystick buttons, digital directions
 			if (ev->code >= 256)
 			{
@@ -3770,7 +3757,6 @@ void mergedevs()
 
 									input[i].unique_hash = str_hash(input[i].id);
 									input[i].unique_hash = str_hash(input[i].mac, input[i].unique_hash);
-									input[i].is_keyboard = strstr(handlers, "kbd") ? true : false;
 
 									input[i].timeout = (strlen(uniq) && strstr(sysfs, "bluetooth")) ? (cfg.bt_auto_disconnect * 10) : 0;
 								}
@@ -6278,15 +6264,8 @@ advancedButtonMap *get_advanced_map_defs(int devnum)
 	return input[devnum].advanced_map; 
 }
 
-bool device_is_keyboard(int devnum)
-{
-	return input[devnum].is_keyboard;
-}
-
-
 void get_button_name_for_code(uint16_t btn_code, int devnum, char *bname, size_t bname_sz)
 {
-	
 	static int last_devnum = -1;
 	static uint16_t btn_map[KEY_MAX - BTN_JOYSTICK] = {0};
 	static uint16_t abs_map[ABS_MAX] = {0};
@@ -6309,26 +6288,19 @@ void get_button_name_for_code(uint16_t btn_code, int devnum, char *bname, size_t
       uint8_t hat_num = (axis_idx - ABS_HAT0X)/2;
       bool axis_is_y = (axis_idx - ABS_HAT0X)%2;
       uint8_t hat_sub = 0;
-      if (axis_is_y)
-      {
-        hat_sub = is_max ? 4 : 1;
-      } else {
-        hat_sub = is_max ? 2 : 8;
-      }
+
+      if (axis_is_y) hat_sub = is_max ? 4 : 1;
+      else hat_sub = is_max ? 2 : 8;
+
       if (hat_sub)
-      {
         snprintf(bname,bname_sz, "h%d.%d", hat_num, hat_sub);
-      }
     } else {
       //Mister 'fake' analog digital inputs.
       for(unsigned int j=0; j < sizeof(abs_map)/sizeof(uint16_t); j++)
       {
         if (abs_map[j] == axis_idx)
         {
-          if (is_max)
-            snprintf(bname, bname_sz, "+a%d", j);
-          else
-            snprintf(bname, bname_sz, "-a%d", j);
+          snprintf(bname, bname_sz, is_max ? "+a%d" : "-a%d", j);
           break;
         }
       }
@@ -6344,9 +6316,6 @@ void get_button_name_for_code(uint16_t btn_code, int devnum, char *bname, size_t
     }
   }
 }
-
-
-
 
 static void input_advanced_save_filename(char *fname, size_t pathlen, int dev_num, bool def=false)
 {
@@ -6367,13 +6336,7 @@ void input_advanced_save(int dev_num)
     int bufsize = sizeof(advancedButtonMap)*ADVANCED_MAP_MAX;
 		input_advanced_save_filename(fname, sizeof(fname), dev_num);
 		strncat(path, fname, sizeof(path)-1);
-		int saved = FileSaveConfig(path, input[dev_num].advanced_map, bufsize); 
-		if (saved)
-		{
-			Info("Saved!");
-		} else {
-			Info("Error saving");
-		}
+		FileSaveConfig(path, input[dev_num].advanced_map, bufsize); 
 	}
 }
 
@@ -6404,30 +6367,6 @@ void input_advanced_load(int dev_num)
 	}
 }
 
-void input_advanced_check_save(int devnum, advancedButtonMap *abm)
-{
-  if (!abm) return;
-
-	if (abm->input_codes[0] && (abm->button_mask || abm->output_codes[0]))
-	{
-		input_advanced_save(devnum);
-	}
-}
-
-bool input_advanced_check_hotkeys(uint16_t *key_codes, size_t kc_cnt, int devnum)
-{
-  //Don't allow OSD button (or combo) or KEY_F12 to be redefined via advanced map.
-	for(size_t i = 0; i < kc_cnt; i++)
-	{
-		uint16_t kc = key_codes[i];
-		if (!kc && i != 0)
-		 return false; 
-		if (kc != input[devnum].mmap[SYS_BTN_OSD_KTGL] && kc != input[devnum].mmap[SYS_BTN_OSD_KTGL+1] && kc != input[devnum].mmap[SYS_BTN_OSD_KTGL+2] && kc != KEY_F12)
-		return true;
-  }
-	return false;
-}
-
 //If we stored them sorted we could just use memcmp....
 advancedButtonMap *input_advanced_find_match(advancedButtonMap *newMap, int devnum)
 {
@@ -6456,7 +6395,6 @@ advancedButtonMap *input_advanced_find_match(advancedButtonMap *newMap, int devn
 	return NULL;
 }
 
-
 void input_advanced_clear(int devnum)
 {
 	if (devnum <0 || devnum >= NUMDEV) return;
@@ -6466,7 +6404,6 @@ void input_advanced_clear(int devnum)
 
 void input_advanced_delete(advancedButtonMap *todel, int devnum)
 {
-
 	if (devnum <0 || devnum >= NUMDEV) return;
 	//endptr is not a valid ABM, but it is a pointer to just after the last one
 	//only used for address calculation in memmove. 
@@ -6492,11 +6429,11 @@ int input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum)
 			}
 		}
 	}
-	if (abm)  
+	if (abm)
 	{
 		memcpy(abm, abm_entry, sizeof(advancedButtonMap));
+		input_advanced_save(devnum);
 		return 1;
 	}
-	//No free slots
 	return -2;
 }

@@ -4234,7 +4234,6 @@ void HandleUI(void)
 		menustate = MENU_JOYKBDMAP1;
 		parentstate = MENU_JOYKBDMAP;
 
-		abm_dev_num = get_last_input_dev();
 		memset(&abm_edit_map, 0, sizeof(abm_edit_map));
 		start_map_setting(4, 0, abm_edit_map.input_codes);
 
@@ -4269,11 +4268,7 @@ void HandleUI(void)
 
 				if (map_finish == 2 && map_set == 1) //Output capture finished successfully
 				{
-					if (input_advanced_save_entry(&abm_edit_map, get_map_dev()))
-					{
-						input_advanced_save(get_map_dev());
-
-					}
+					input_advanced_save_entry(&abm_edit_map, get_map_dev());
 					memset(&abm_edit_map, 0, sizeof(abm_edit_map));
 					start_map_setting(4, 0, abm_edit_map.input_codes);
 				}
@@ -4299,33 +4294,28 @@ void HandleUI(void)
 					} else {
 						char str[128] = {};
 						build_advanced_map_code_str(abm_edit_map.input_codes, sizeof(abm_edit_map.input_codes), str, sizeof(str), 14);
-
 						OsdWrite(1, "       Press button(s) ", 0, 0);
 						OsdWrite(2, "     or key(s) to change", 0, 0);
 						OsdWrite(3, str, 0, 0);
 						OsdWrite(4, "", 0, 0);
-
 						OsdWrite(OsdGetSize() - 1, " Enter \x16 Clear, Esc \x16 Finish", menusub == 0, 0);
 						if (map_finish == 2)
 							start_map_setting(4, 1, abm_edit_map.output_codes);
 					}
 				} else if (map_set == 1) {
-					if (abm_edit_map.input_codes[0] && abm_edit_map.input_codes[0] <= 256)
+					bool is_kbd = abm_edit_map.input_codes[0] && abm_edit_map.input_codes[0] <= 256;
+					if (is_kbd)
 					{
 						OsdWrite(1, "     Press key(s) to map to", 0, 0);
 						OsdWrite(2, "        on a keyboard", 0, 0);
-						char str[128] = {};
-						build_advanced_map_code_str(abm_edit_map.output_codes, sizeof(abm_edit_map.output_codes), str, sizeof(str), 14);
-						OsdWrite(3, str, 0, 0);
-
 					} else {
 						OsdWrite(1, "   Press button(s) to map to", 0, 0);
 						OsdWrite(2, "        on the same pad", 0, 0);
 						OsdWrite(3, "    or key(s) on a keyboard", 0, 0);
-						char str[128] = {};
-						build_advanced_map_code_str(abm_edit_map.output_codes, sizeof(abm_edit_map.output_codes), str, sizeof(str), 14);
-						OsdWrite(4, str, 0, 0);
 					}
+					char str[128] = {};
+					build_advanced_map_code_str(abm_edit_map.output_codes, sizeof(abm_edit_map.output_codes), str, sizeof(str), 14);
+					OsdWrite(is_kbd ? 3 : 4, str, 0, 0);
 				}
 				break;
 			}
@@ -7204,7 +7194,6 @@ void HandleUI(void)
 						parentstate = MENU_ADVANCED_MAP_LIST1;
 						if (menusub == 0) {
 							abm_edit_ptr = &abm_edit_map;
-							//New, find suitable slot
 						} else {
 							abm_edit_ptr = &abms[menusub-1];
 						}
@@ -7228,9 +7217,9 @@ void HandleUI(void)
 				  menumask = 0;
 					firstmenu = 0;
 					adjvisible = 0;
-				  bool dev_kbd = device_is_keyboard(abm_dev_num);
-					if (abm_edit_ptr->input_codes[0] && abm_edit_ptr->input_codes[0] > 256)
-						dev_kbd = false;
+				  bool dev_kbd = false;
+					if (abm_edit_ptr->input_codes[0] && abm_edit_ptr->input_codes[0] <= 256)
+						dev_kbd = true;
 					menu_parse_buttons();
 
 					char bname[32] = {};
@@ -7408,17 +7397,12 @@ void HandleUI(void)
 					  infowrite(6, "or Keyboard key(s)");
 					}
 					infowrite(7, "");
-
-					if (device_is_keyboard(abm_dev_num))
-					{
-					  infowrite(8, "Enter \x16 Clear");
-					} else {
-					  infowrite(8, "Menu-hold \x16 Clear");
-					}
-					OsdWrite(9, info_bottom, 0, 0);
+				  infowrite(8, "Enter \x16 Clear");
+				  infowrite(9, "Menu-hold \x16 Clear");
+					OsdWrite(10, info_bottom, 0, 0);
 					char code_str[256] = {};
 					build_advanced_map_code_str(get_map_code_store(), get_map_count()*sizeof(uint16_t), code_str, sizeof(code_str), 14);
-					OsdWrite(10, code_str, 0, 0);
+					OsdWrite(11, code_str, 0, 0);
 
 					
 					int map_finish = get_map_finish();
@@ -7427,7 +7411,6 @@ void HandleUI(void)
 					if (map_finish == 2 || (map_cancel && map_finish != 3)) 
 					{
 						menustate = MENU_ADVANCED_MAP_EDIT1;
-
 						if (map_cancel) memset(get_map_code_store(), 0, get_map_count()*sizeof(uint16_t));
 						if (menustate == MENU_ADVANCED_MAP_KEYCAPTURE1)
 					  {

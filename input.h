@@ -139,14 +139,10 @@ void parse_buttons();
 char *get_buttons(int type = 0);
 void set_ovr_buttons(char *s, int type);
 
-int get_last_input_dev();
 advancedButtonMap *get_advanced_map_defs(int devnum);
 void get_button_name_for_code(uint16_t btn_code, int devnum, char *bname, size_t bname_sz);
-bool device_is_keyboard(int devnum);
 void input_advanced_save(int dev_num);
 void input_advanced_load(int dev_num);
-void input_advanced_check_save(int devnum, advancedButtonMap *abm);
-bool input_advanced_check_hotkeys(uint16_t *key_codes, size_t kc_size, int devnum);
 int input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum);
 void input_advanced_clear(int devnum);
 void input_advanced_delete(advancedButtonMap *todel, int devnum);
