@@ -2,6 +2,7 @@
 #ifndef EVINPUT_H
 #define EVINPUT_H
 
+#include <iterator>
 #include <linux/input.h>
 
 #define HID_LED_NUM_LOCK    1
@@ -102,7 +103,7 @@ void input_notify_mode();
 int input_poll(int getchar);
 int is_key_pressed(int key);
 
-void start_map_setting(int cnt, int set = 0, uint16_t *code_store = NULL);
+void start_map_setting(int cnt, int set = 0, advancedButtonMap *code_store = NULL);
 int get_map_set();
 int get_map_button();
 int get_map_type();
@@ -113,7 +114,7 @@ void finish_map_setting(int dismiss);
 uint16_t get_map_vid();
 uint16_t get_map_pid();
 int get_map_dev();
-uint16_t *get_map_code_store();
+advancedButtonMap *get_map_code_store();
 int get_map_count();
 int has_default_map();
 void send_map_cmd(int key);
