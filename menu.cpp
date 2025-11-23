@@ -1120,7 +1120,6 @@ void HandleUI(void)
 	static int old_volume = 0;
 	static uint32_t lock_pass_timeout = 0;
 	static uint32_t menu_timeout = 0;
-	static uint32_t menu_timeoutstate = 0;
 
 	static char	cp_MenuCancel;
 
@@ -4251,9 +4250,9 @@ void HandleUI(void)
 		infowrite(10, "");
 		if (abm_edit_map.input_codes[0] && abm_edit_map.input_codes[0] <= 256)
 		{
-			infowrite(11, "    Tab \x16 Advanced ");
-			infowrite(12, "  Esc \x16 Finish ");
-			infowrite(13, "Enter \x16 Clear ");
+			infowrite(11, "    F12 \x16 Advanced ");
+			infowrite(12, "  Esc \x16 Clear ");
+			infowrite(13, "Enter \x16 Finish ");
 		} else {
 	    infowrite(11, "     OK-hold \x16 Advanced  ");
 		  infowrite(12, "     Menu \x16 Finish ");
@@ -4266,31 +4265,25 @@ void HandleUI(void)
 
 		case MENU_JOYKBDMAP1:
 			{
-				int map_finish = get_map_finish();
-				int map_set = get_map_set();
-				int map_cancel = get_map_cancel();
-				int map_clear = get_map_clear();
+				int map_clear = get_map_cancel();
 				abm_dev_num = get_map_dev();
 
-				if (map_finish == 2 || (map_finish != 3 && map_cancel) || map_clear)
+				if (get_map_finish() || map_clear)
 				{
 					OsdWrite(1);
-					OsdWrite(2, (map_cancel || map_clear) ? "          Clearing" : "          Finishing");
+					OsdWrite(2,  (map_clear) ? "          Clearing" : "          Finishing");
 					OsdWrite(3);
 					OsdWrite(OsdGetSize() - 1);
 					OsdUpdate();
-					if (map_finish == 2 || map_clear)
-					{
-						finish_map_setting(0);
-						menustate = MENU_COMMON1;
-						menusub = 3;
-					}
-					if (!map_cancel) sleep(1);
-				} else if (map_finish == 3 && map_cancel) {
+					finish_map_setting(map_clear);
+					menustate = MENU_COMMON1;
+					menusub = 3;
+					sleep(1);
+				} else if (get_map_advance()) {
 					menustate = MENU_ADVANCED_MAP_LIST1;
 					menusub = 0;
 					finish_map_setting(0);
-				} else if (map_set == 2) {
+				} else if (get_map_set() == 2) {
 					bool is_kbd = abm_edit_map.input_codes[0] && abm_edit_map.input_codes[0] <= 256;
 					if (is_kbd)
 					{
@@ -4311,7 +4304,7 @@ void HandleUI(void)
 					 OsdWrite(2, "     or key(s) to change", 0, 0);
 					 OsdWrite(3, str, 0, 0);
 					 OsdWrite(4, "", 0, 0);
-					 OsdWrite(OsdGetSize() - 1, " Enter \x16 Clear, Esc \x16 Finish", menusub == 0, 0);
+					 OsdWrite(OsdGetSize() - 1, " Esc \x16 Clear, Enter \x16 Finish", menusub == 0, 0);
 				}
 				break;
 			}
@@ -7131,8 +7124,6 @@ void HandleUI(void)
 		SelectFile("", 0, SCANO_CORES, MENU_CORE_FILE_SELECTED1, cp_MenuCancel);
 		break;
 
-		//Advanced remapping
-
 	case MENU_ADVANCED_MAP_LIST1:
 	{
 						OsdSetTitle("Advanced");
@@ -7171,6 +7162,7 @@ void HandleUI(void)
 						}
 						break;
 				}
+
 			case MENU_ADVANCED_MAP_LIST2:
 				{
 					if (select)
@@ -7374,26 +7366,26 @@ void HandleUI(void)
 					OsdSetTitle("Set Hotkey", 0);
 					for (int i = 0; i < 4; i++) OsdWrite(i, "", 0, 0);
 					OsdWrite(4, info_top, 0, 0);
-					if (get_map_set() == 2)
+					if (get_map_set() == 1 || abm_edit_ptr->input_codes[0] > 256)
 					{
-					  infowrite(5, "Press key(s) on keyboard");
-					  infowrite(6, "or button(s) on joypad");
+					  infowrite(5, "Press button(s) on joypad");
+					  infowrite(6, "or key(s) on keyboard");
 					} else {
-					  infowrite(5, "Press Joypad button(s)");
-					  infowrite(6, "or Keyboard key(s)");
+					  infowrite(5, "");
+					  infowrite(6, "Press Keyboard key(s)");
 					}
 					infowrite(7, "");
-				  infowrite(8, "Enter \x16 Clear");
+				  infowrite(8, "Esc \x16 Clear");
 				  infowrite(9, "Menu-hold \x16 Clear");
 					OsdWrite(10, info_bottom, 0, 0);
 					char code_str[256] = {};
 					build_advanced_map_code_str((get_map_set() == 2) ? abm_edit_ptr->output_codes : abm_edit_ptr->input_codes, sizeof(abm_edit_ptr->input_codes), code_str, sizeof(code_str), 14);
 					OsdWrite(11, get_map_cancel() ? "          Clearing" : code_str, 0, 0);
 
-					if (get_map_finish() == 2 || get_map_clear()) 
+					if (get_map_finish() || get_map_cancel())
 					{
 						menustate = MENU_ADVANCED_MAP_EDIT1;
-						finish_map_setting(0);
+						finish_map_setting(get_map_cancel());
 					}
 					break;
 				}

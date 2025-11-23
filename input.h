@@ -114,6 +114,7 @@ uint16_t get_map_vid();
 uint16_t get_map_pid();
 int get_map_dev();
 advancedButtonMap *get_map_code_store();
+int get_map_advance();
 int get_map_count();
 int has_default_map();
 void send_map_cmd(int key);
@@ -141,9 +142,9 @@ void set_ovr_buttons(char *s, int type);
 
 advancedButtonMap *get_advanced_map_defs(int devnum);
 void get_button_name_for_code(uint16_t btn_code, int devnum, char *bname, size_t bname_sz);
-void input_advanced_save(int dev_num);
+void input_advanced_save(int dev_num, bool do_delete=false);
 void input_advanced_load(int dev_num);
-int input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum);
+void input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum);
 void input_advanced_clear(int devnum);
 void input_advanced_delete(advancedButtonMap *todel, int devnum);
 

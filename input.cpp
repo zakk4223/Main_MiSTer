@@ -1414,6 +1414,7 @@ static int tmp_axis_n = 0;
 static int grabbed = 1;
 
 static uint32_t osd_timer = 0;
+static uint32_t map_advance_timer = 0;
 
 void start_map_setting(int cnt, int set, advancedButtonMap *abm_store)
 {
@@ -1433,6 +1434,7 @@ void start_map_setting(int cnt, int set, advancedButtonMap *abm_store)
 		if (cnt != 3)
 			memset((set == 1) ? abm_store->input_codes : abm_store->output_codes, 0, sizeof(abm_store->input_codes));
 		osd_timer = 0;
+		map_advance_timer = 0;
 	} else if (!mapping_set) {
 		mapping_dev = -1;
 		mapping_type = (cnt < 0) ? 3 : cnt ? 1 : 2;
@@ -1496,6 +1498,11 @@ int get_map_cancel()
 	return (mapping && !is_menu() && osd_timer && CheckTimer(osd_timer));
 }
 
+int get_map_advance()
+{
+	return (mapping && !is_menu() && map_advance_timer && CheckTimer(map_advance_timer));
+}
+
 static char *get_unique_mapping(int dev, int force_unique = 0)
 {
 	uint32_t vidpid = (input[dev].vid << 16) | input[dev].pid;
@@ -1545,7 +1552,20 @@ static char *get_kbdmap_name(int dev)
 void finish_map_setting(int dismiss)
 {
 	mapping = 0;
-	if (mapping_dev<0 || mapping_type == 3) return;
+	if (mapping_dev<0) return;
+
+	if (mapping_type == 3)
+	{
+		if (!dismiss) return;
+		if (mapping_count == 3) 
+		{
+			input_advanced_clear(mapping_dev);
+			if (mapping_store) memset(mapping_store, 0, sizeof(advancedButtonMap));
+		} else if (mapping_store) {
+			memset(mapping_set == 2 ? mapping_store->output_codes : mapping_store->input_codes, 0, sizeof(mapping_store->input_codes));
+		}
+		return;
+	}
 
 	if (mapping_type == 2)
 	{
@@ -2838,57 +2858,36 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 	}
 
 
-	if (mapping && mapping_type == 3)
-	{
-		if (ev->value == 1 && ev->code == KEY_ENTER && mapping_set == 1 && mapping_button <= 1)
-			map_skip = 1;
-
-		if (map_skip && mapping_set == 1 && mapping_count == 3 && mapping_button <= 1)
-		{
-			memset(mapping_store, 0, sizeof(advancedButtonMap));
-			mapping_finish = 2;
-			ev->value = 0;
-		}
-
-		if (cancel)
-		{
-			if (mapping_count == 3 && mapping_set == 1 && mapping_button <= 1)
-			{
-				input_advanced_clear(mapping_dev);
-				mapping_clear = 1;
-			} else if (mapping_count < 3 && mapping_button <= 1) {
-				memset(mapping_set == 2 ? mapping_store->output_codes : mapping_store->input_codes, 0, sizeof(mapping_store->input_codes));
-				mapping_clear = 1;
-			}
-
-		}
-		osd_event = 0;
-	}
-
 	//mapping
 	
-	if (mapping && mapping_type == 3 && !mapping_clear)
+	if (mapping && mapping_type == 3 && ev->type == EV_KEY)
 	{
+		bool jkm_can_intr = mapping_count == 3 && mapping_button <= 1 && mapping_set == 1;
+		if (mapping_dev < 0) mapping_dev = dev;
+		if (ev->value == 1 && ev->code == KEY_ENTER) map_skip = 1;
+		if (map_skip && jkm_can_intr)
+			mapping_finish = 1;
+
+		if (jkm_can_intr
+			  && (ev->code == (input[mapping_dev].mmap[SYS_BTN_MENU_FUNC] & 0xFFFF) || ev->code == KEY_F12))
+					map_advance_timer = ev->value ? (ev->code == KEY_F12) ? 1 : GetTimer(5000) : 0;
+
 		if (ev->value == 1)
 		{
 			uint16_t *code_store = mapping_set ==  1 ? mapping_store->input_codes : mapping_store->output_codes; 
-			if (mapping_dev < 0) mapping_dev = dev;
 			code_store[mapping_button++] = ev->code;
 			mapping_current_dev = mapping_dev;
 			if (mapping_button == sizeof(mapping_store->input_codes)/sizeof(mapping_store->input_codes[0])) //Don't overflow, just keep replacing the last entry
 				mapping_button--;
-
-			if (mapping_count == 3 && mapping_set == 1 && (ev->code == (input[mapping_dev].mmap[SYS_BTN_MENU_FUNC] & 0xFFFF) || ev->code == KEY_F12) && mapping_button == 1)
-			{
-				osd_timer = (ev->code == KEY_F12) ? 1 : GetTimer(5000);
-				mapping_finish = 3;
-			}
-			if (mapping_finish == 3 && mapping_button > 1)
-			{
-				osd_timer = 0;
-				mapping_finish = 0;
-			}
+			if (mapping_button > 1)
+				osd_timer = map_advance_timer = 0;
 		} else if (ev->value == 0 && mapping_button > 0) {
+			if (ev->code == KEY_ESC && (jkm_can_intr || (mapping_count < 3 && mapping_button <= 1)))
+			{
+				osd_timer = 1;
+				return;
+			}
+
 			if (mapping_count == 3)
 			{
 				mapping_set++;
@@ -2900,7 +2899,7 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 					memset(mapping_store, 0, sizeof(advancedButtonMap));
 				}
 			} else {
-				mapping_finish = 2;
+				mapping_finish = 1;
 			}
 			osd_timer = 0;
 		}
@@ -6352,11 +6351,11 @@ static void input_advanced_save_filename(char *fname, size_t pathlen, int dev_nu
 {
   char *id = get_unique_mapping(dev_num);
 
-	if (def || is_menu()) snprintf(fname, pathlen, "advanced_input_%s%s_v3.map", id, input[dev_num].mod ? "_m" : "");
-	else snprintf(fname, pathlen, "%s_advanced_input_%s%s_v3.map", user_io_get_core_name(), id, input[dev_num].mod ? "_m" : "");
+	if (def || is_menu()) snprintf(fname, pathlen, "advanced_input_%s%s_v1.map", id, input[dev_num].mod ? "_m" : "");
+	else snprintf(fname, pathlen, "%s_advanced_input_%s%s_v1.map", user_io_get_core_name(), id, input[dev_num].mod ? "_m" : "");
 }
 
-void input_advanced_save(int dev_num)
+void input_advanced_save(int dev_num, bool do_delete)
 {
 	char path[256] = {JOYMAP_DIR};
 	char fname[256] = {};
@@ -6368,7 +6367,10 @@ void input_advanced_save(int dev_num)
 		input_advanced_save_filename(fname, sizeof(fname), dev_num);
 
 		strncat(path, fname, sizeof(path)-1);
-		FileSaveConfig(path, input[dev_num].advanced_map, bufsize); 
+		if (do_delete)
+			FileDeleteConfig(path);
+		else
+			FileSaveConfig(path, input[dev_num].advanced_map, bufsize); 
 	}
 }
 
@@ -6431,12 +6433,13 @@ void input_advanced_clear(int devnum)
 {
 	if (devnum <0 || devnum >= NUMDEV) return;
 	memset(input[devnum].advanced_map, 0, sizeof(input[devnum].advanced_map));
-	input_advanced_save(devnum);
+	input_advanced_save(devnum, true);
 }
 
 void input_advanced_delete(advancedButtonMap *todel, int devnum)
 {
 	if (devnum <0 || devnum >= NUMDEV) return;
+	if (todel < input[devnum].advanced_map || todel > &input[devnum].advanced_map[ADVANCED_MAP_MAX-1]) return;
 	//endptr is not a valid ABM, but it is a pointer to just after the last one
 	//only used for address calculation in memmove. 
 	advancedButtonMap *endptr = &input[devnum].advanced_map[ADVANCED_MAP_MAX];
@@ -6445,14 +6448,22 @@ void input_advanced_delete(advancedButtonMap *todel, int devnum)
 }
 
 
-int input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum)
+void input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum)
 {
-	if (devnum <0 || devnum >= NUMDEV) return -1;
+	if (devnum <0 || devnum >= NUMDEV || !abm_entry) return;
+
+	if (!abm_entry->input_codes[0] || (!abm_entry->output_codes[0] && !abm_entry->button_mask))
+	{
+		input_advanced_delete(abm_entry, devnum);
+		return;
+	}
+
 	if (abm_entry >= input[devnum].advanced_map && abm_entry <= &input[devnum].advanced_map[ADVANCED_MAP_MAX-1])
 	{
 		input_advanced_save(devnum);
-		return 1;
+		return;
 	}
+
 	advancedButtonMap *abm = input_advanced_find_match(abm_entry, devnum);
 	if (!abm)
 	{
@@ -6470,7 +6481,6 @@ int input_advanced_save_entry(advancedButtonMap *abm_entry, int devnum)
 	{
 		memcpy(abm, abm_entry, sizeof(advancedButtonMap));
 		input_advanced_save(devnum);
-		return 1;
+		return;
 	}
-	return -2;
 }
