@@ -2,7 +2,6 @@
 #ifndef EVINPUT_H
 #define EVINPUT_H
 
-#include <iterator>
 #include <linux/input.h>
 
 #define HID_LED_NUM_LOCK    1
