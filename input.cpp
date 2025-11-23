@@ -2837,8 +2837,12 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 		osd_timer = 0;
 	}
 
+
 	if (mapping && mapping_type == 3)
 	{
+		if (ev->value == 1 && ev->code == KEY_ENTER && mapping_set == 1 && mapping_button <= 1)
+			map_skip = 1;
+
 		if (map_skip && mapping_set == 1 && mapping_count == 3 && mapping_button <= 1)
 		{
 			memset(mapping_store, 0, sizeof(advancedButtonMap));
@@ -2874,9 +2878,9 @@ static void input_cb(struct input_event *ev, struct input_absinfo *absinfo, int 
 			if (mapping_button == sizeof(mapping_store->input_codes)/sizeof(mapping_store->input_codes[0])) //Don't overflow, just keep replacing the last entry
 				mapping_button--;
 
-			if (mapping_count == 3 && (ev->code == (input[mapping_dev].mmap[SYS_BTN_MENU_FUNC] & 0xFFFF) || ev->code == KEY_TAB) && mapping_button == 1)
+			if (mapping_count == 3 && mapping_set == 1 && (ev->code == (input[mapping_dev].mmap[SYS_BTN_MENU_FUNC] & 0xFFFF) || ev->code == KEY_F12) && mapping_button == 1)
 			{
-				osd_timer = GetTimer(5000);
+				osd_timer = (ev->code == KEY_F12) ? 1 : GetTimer(5000);
 				mapping_finish = 3;
 			}
 			if (mapping_finish == 3 && mapping_button > 1)

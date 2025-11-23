@@ -1261,8 +1261,13 @@ void HandleUI(void)
 	{
 		switch (c)
 		{
+		case KEY_F12:
+			if (user_io_osd_is_visible())
+				menu = true;
+			break;
 		case KEY_F12 | UPSTROKE:
-			menu = true;
+			if (!user_io_osd_is_visible())
+				menu = true;
 			//menu_key_set(KEY_F12 | UPSTROKE);
 			if(video_fb_state()) video_menu_bg(user_io_status_get("[3:1]"));
 			video_fb_enable(0);
