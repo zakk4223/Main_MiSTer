@@ -4428,8 +4428,34 @@ void ss_menu_save()
   if (!cfg.ss_save_bit[0]) return;
 
   ss_save_pending = true;
+	char screenshot_name[1024] = {0};
+	char use_rom_name[1024] = {0};
+	strcpy(use_rom_name, ss_rom_name);
+	char *p = strrchr(use_rom_name, '.');
+	if (p) p[0] = 0;
+	p = strrchr(use_rom_name, '/');
+	if (!p) p = use_rom_name;
+	sprintfz(screenshot_name, "/%s/%s_ss_%d.png", CoreName, p, ss_save_slot);
+	request_screenshot(screenshot_name, 0);
   user_io_status_set(cfg.ss_save_bit, 1);
   user_io_status_set(cfg.ss_save_bit, 0);
+
 }
 
+
+char *ss_screenshot_path()
+{
+
+	static char ss_filename[1024] = {0};
+	char screenshot_name[1024] = {0};
+	char use_rom_name[1024] = {0};
+	strcpy(use_rom_name, ss_rom_name);
+	char *p = strrchr(use_rom_name, '.');
+	if (p) p[0] = 0;
+	p = strrchr(use_rom_name, '/');
+	if (!p) p = use_rom_name;
+	sprintfz(screenshot_name, "/%s/%s_ss_%d.png", CoreName, p, ss_save_slot);
+	FileGenerateScreenshotName(screenshot_name, ss_filename, "png", 1024);
+	return (char *)getFullPath(ss_filename);
+}
 

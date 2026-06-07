@@ -8,6 +8,7 @@
 
 #include <inttypes.h>
 #include "file_io.h"
+#include "str_util.h"
 
 #define UIO_STATUS      0x00
 #define UIO_BUT_SW      0x01
@@ -297,8 +298,10 @@ char is_3do();
 
 
 void ss_menu_load();
+void ss_menu_set_pid(pid_t pid);
 void ss_menu_save();
 void ss_menu_set_slot(uint8_t slot);
+char *ss_screenshot_path();
 uint8_t ss_menu_get_slot();
 int ss_menu_get_descr(char *descr, int descr_sz);
 bool core_has_save_states();

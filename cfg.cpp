@@ -37,6 +37,7 @@ typedef struct
 static const ini_var_t ini_vars[] =
 {
 
+	{ "EXTERNAL_SAVE_STATE_UI", (void *)(&(cfg.external_save_state_ui)), STRING, 0, sizeof(cfg.external_save_state_ui) - 1},
 	{ "SOCD_UD", (void*)(&(cfg.socd_ud)), STRING, 0, sizeof(cfg.socd_ud) - 1 },
 	{ "SOCD_LR", (void*)(&(cfg.socd_lr)), STRING, 0, sizeof(cfg.socd_lr) - 1 },
 	{ "SS_LOAD_BIT", (void *)(&(cfg.ss_load_bit)), STRING, 0, sizeof(cfg.ss_load_bit) - 1},
@@ -466,6 +467,12 @@ static void ini_parse_var(char* buf)
     if (!strcasecmp(cfg.socd_lr, "left")) cfg.socd_lr_int = SOCD_LR_LEFT;
     if (!strcasecmp(cfg.socd_lr, "right")) cfg.socd_lr_int = SOCD_LR_RIGHT;
   }
+
+	cfg.use_external_save_state_ui = 0;
+	if (strlen(cfg.external_save_state_ui))
+	{
+		cfg.use_external_save_state_ui = 1;
+	}
 
 }
 

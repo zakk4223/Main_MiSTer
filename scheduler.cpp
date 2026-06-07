@@ -48,6 +48,7 @@ static void scheduler_co_ui(void)
 		{
 			SPIKE_SCOPE("co_ui", 1000);
 			HandleUI();
+			FlipFBGui();
 			OsdUpdate();
 		}
 

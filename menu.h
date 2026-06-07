@@ -16,6 +16,7 @@ void InfoMessage(const char *message, int timeout = 2000, const char *title = "M
 void Info(const char *message, int timeout = 2000, int width = 0, int height = 0, int frame = 0);
 void MenuHide();
 void SelectINI();
+void FlipFBGui();
 
 void open_joystick_setup();
 int menu_lightgun_cb(int idx, uint16_t type, uint16_t code, int value);

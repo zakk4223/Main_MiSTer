@@ -122,6 +122,8 @@ typedef struct {
 	char socd_lr[16];
 	uint8_t socd_ud_int;
 	uint8_t socd_lr_int;
+	char external_save_state_ui[256];
+	uint8_t use_external_save_state_ui;
 	char vfilter_interlace_default[1023];
 	char autofire_rates[3072];
 	uint8_t autofire_on_directions;

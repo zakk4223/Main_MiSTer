@@ -2178,6 +2178,7 @@ static void uinp_send_key(uint16_t key, int press)
 
 static void uinp_check_key()
 {
+	return;
 	if (uinp_fd > 0)
 	{
 		if (!grabbed)

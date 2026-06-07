@@ -44,6 +44,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <bluetooth.h>
 #include <hci.h>
 #include <hci_lib.h>
+#include <unistd.h>
 
 #include "file_io.h"
 #include "osd.h"
@@ -226,6 +227,7 @@ enum MENU
   MENU_SAVE_STATE3,
 };
 
+static bool menu_using_fb = false;
 static uint32_t menustate = MENU_NONE1;
 static uint32_t parentstate;
 static uint32_t menusub = 0;
@@ -240,6 +242,9 @@ static bool osd_unlocked = 1;
 static char osd_code_entry[32];
 static uint32_t osd_lock_timer = 0;
 
+static pid_t ttypid = 0;
+static int ttypipe[2];
+static bool menu_did_write;
 
 extern const char *version;
 
@@ -813,6 +818,27 @@ static void MenuWrite(unsigned char n, const char *s = "", unsigned char invert 
 {
 	int row = n - firstmenu;
 
+
+
+	if (ttypipe[1])
+	{
+		FILE *fbf = fdopen(ttypipe[1], "w");
+
+		char fb_str[1024] = {0};
+		
+		if (!menu_did_write)
+		{
+			strcpy(fb_str, "<MENUSTART>\n");
+			fputs(fb_str, fbf);
+			fflush(fbf);
+		}
+
+		sprintfz(fb_str, "<MENULINE>%s<%d>%s\n", invert ? "<SELECTED>" : "", n, s);
+		fputs(fb_str, fbf);
+		fflush(fbf);
+	}
+
+	menu_did_write = true;
 	if (row < 0)
 	{
 		if (invert) adjvisible = row;
@@ -848,9 +874,10 @@ const char* get_rbf_name_bootcore(char *str)
 }
 
 
-static void vga_nag()
+static void vga_nag(bool hdmi_fb = false)
 {
-	if (video_fb_state())
+
+	if (video_fb_state() && !hdmi_fb)
 	{
 		EnableOsd_on(OSD_VGA);
 		OsdSetSize(16);
@@ -875,7 +902,7 @@ static void vga_nag()
 	}
 
 	OsdDisable();
-	EnableOsd_on(OSD_ALL);
+	EnableOsd_on(hdmi_fb ? OSD_VGA : OSD_ALL);
 }
 
 void process_addon(char *ext, uint8_t idx)
@@ -1086,8 +1113,58 @@ void build_advanced_map_summary(advancedButtonMap *abm, char *dest_str, size_t d
 	snprintf(dest_str, dest_size, "%s->%s", input_str, output_str);
 }
 
+void closeFBMenu()
+{
+	if (ttypid)
+	{
+		if (ttypipe[1]) close(ttypipe[1]);
+		kill(ttypid, SIGKILL); //Nuke
+													 
+		ttypipe[0] = 0;
+		ttypipe[1] = 0;
+		video_fb_enable(0);
+		if (waitpid(ttypid, 0, 0) > 0)
+		{
+		}
+		ttypid = 0;
+	}
+
+	menu_using_fb = false;
+}
+
+
+void openFBMenu(char *torun)
+{
+
+	if (!ttypid)
+	{
+		 
+		char fdstr[15] = {0};
+ 		video_chvt(2);
+		video_fb_enable(1);
+		pipe(ttypipe);
+		ttypid = fork();
+		if (!ttypid)
+		{
+			close(ttypipe[1]);
+			//execl("/sbin/agetty", "/sbin/agetty", "-a", "root", "-l", "/media/fat/Scripts/screenshots.sh", "--nohostname", "-L", "tty2", "linux", NULL);
+			sprintfz(fdstr, "%d", ttypipe[0]);
+			execl(torun, torun, fdstr, NULL);
+			exit(0); //should never be reached
+		} else {
+			close(ttypipe[0]);
+			fcntl(ttypipe[1], F_SETFL, O_NONBLOCK);
+			vga_nag(true);
+			OsdEnable(DISABLE_KEYBOARD);
+			menu_using_fb = true;
+		}
+	}
+}
+
+
 void HandleUI(void)
 {
+	menu_did_write = false;
 	PROFILE_FUNCTION();
 
 	if (bt_timer >= 0)
@@ -1288,8 +1365,9 @@ void HandleUI(void)
 		}
 	}
 
+	
 	//prevent OSD control while script is executing on framebuffer
-	if ((!video_fb_state() || video_chvt(0) != 2) && !select_ini)
+	if ((!video_fb_state() || video_chvt(0) != 2 || menu_using_fb) && !select_ini)
 	{
 		switch (c)
 		{
@@ -1592,6 +1670,7 @@ void HandleUI(void)
 		menustate = MENU_NONE2;
 		firstmenu = 0;
 		vga_nag();
+		closeFBMenu();
 		OsdSetSize(8);
 		break;
 
@@ -1647,8 +1726,11 @@ void HandleUI(void)
 				}
 			}
 			OsdClear();
-			if (!mgl->done) OsdDisable();
-			else OsdEnable(DISABLE_KEYBOARD);
+			if (!mgl->done) {
+				OsdDisable();
+			} else {
+				OsdEnable(DISABLE_KEYBOARD);
+			}
 			if (mgl->state == 1) mgl->state = 2;
 		}
 		break;
@@ -7794,6 +7876,9 @@ void HandleUI(void)
 
   case MENU_SAVE_STATE1:
    {
+		 			if (cfg.use_external_save_state_ui)
+							openFBMenu(cfg.external_save_state_ui);
+
 					menustate = MENU_SAVE_STATE2;
 					parentstate = MENU_SAVE_STATE1;
 					OsdSetTitle("Save States", 0);
@@ -7817,10 +7902,20 @@ void HandleUI(void)
           MenuWrite(n, " Save", menusub == n, 0); n++;
 					MenuWrite(n, " Load", menusub == n, 0); n++;
 					for (int i = n; i < OsdGetSize() - 1; i++) MenuWrite(i, "", 0, 0);
+					if (cfg.use_external_save_state_ui && ttypid)
+					{
+						if (menu_using_fb && ttypipe[1])
+						{
+							FILE *fbf = fdopen(ttypipe[1], "w");
+							fprintf(fbf, "<MENUIMAGE>%s\n", ss_screenshot_path());
+							fflush(fbf);
+						}
+					}
    }
    break;
   case MENU_SAVE_STATE2:
    {
+
      if (select || minus || plus || left || right)
      {
        menustate = MENU_SAVE_STATE1;
@@ -7852,9 +7947,10 @@ void HandleUI(void)
         case 3:
            if (select)
            {
-             ss_menu_load();
              menustate = MENU_NONE1;
-           }
+             ss_menu_load();
+           } else {
+					 }
            break;
        }
      }
@@ -8159,6 +8255,18 @@ void PrintDirectory(int expand)
 	}
 }
 
+void FlipFBGui()
+{
+	if (menu_did_write && menu_using_fb && ttypipe[1]) {
+		FILE *fbf = fdopen(ttypipe[1], "w");
+		char fb_str[16] = {0};
+		strcpy(fb_str, "<MENUDONE>\n");
+		fputs(fb_str, fbf);
+		fflush(fbf);
+	}
+}
+
+
 static void set_text(const char *message, unsigned char code)
 {
 	char s[40];
@@ -8322,16 +8430,3 @@ void ProgressMessage(const char* title, const char* text, int current, int max, 
 	}
 }
 
-
-/*
-void menu_open_savestate_osd()
-{
-  if (!user_io_osd_is_visible())
-  {
-    menu_open_savestate = true;
-  } else if (menustate == MENU_SAVE_STATE1 || menustate == MENU_SAVE_STATE2) {
-    menu_open_savestate = false;
-    menustate = MENU_NONE1;
-  }
-}
-*/
