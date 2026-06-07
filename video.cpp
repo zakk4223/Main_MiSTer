@@ -2738,6 +2738,7 @@ static bool get_video_info(bool force, VideoInfo *video_info)
 		video_info->vtime = spi_w(0) | (spi_w(0) << 16);
 		video_info->ptime = spi_w(0) | (spi_w(0) << 16);
 		video_info->vtimeh = spi_w(0) | (spi_w(0) << 16);
+    printf("VTIMEH %d\n", video_info->vtimeh);
 		video_info->ctime = spi_w(0) | (spi_w(0) << 16);
 		video_info->pixrep = spi_w(0);
 		video_info->de_h = spi_w(0);
@@ -4300,4 +4301,192 @@ int video_get_rotated()
 {
   return current_video_info.rotated;
 }
+
+
+struct video_staging_param {
+  int vsync_adjust;
+  int vscale_mode;
+  int direct_video;
+  int video_mode;
+  char vmode_str[256];
+};
+
+
+
+static video_staging_param dyn_video_cfg_default = {}, dyn_video_new = {}, dyn_video_revert = {};
+static unsigned long dyn_video_timer = 0;
+
+void video_start_reconfig()
+{
+  dyn_video_new.vsync_adjust = cfg.vsync_adjust;
+  dyn_video_new.vscale_mode = cfg.vscale_mode;
+  dyn_video_new.direct_video = cfg.direct_video;
+  dyn_video_new.video_mode = -1;
+  dyn_video_new.vmode_str[0] = 0;
+}
+
+
+
+void video_set_vsync_adjust(int value)
+{
+  dyn_video_new.vsync_adjust = value;
+  if (dyn_video_new.vsync_adjust < 0)
+    dyn_video_new.vsync_adjust = 2;
+  if (dyn_video_new.vsync_adjust > 2 )
+    dyn_video_new.vsync_adjust = 0;
+}
+
+void video_set_vscale_mode(int value)
+{
+  dyn_video_new.vscale_mode = value;
+  if (dyn_video_new.vscale_mode < 0)
+    dyn_video_new.vscale_mode = 5;
+  if (dyn_video_new.vscale_mode > 5 )
+    dyn_video_new.vscale_mode = 0;
+}
+
+void video_set_direct_video(int value)
+{
+  dyn_video_new.direct_video = value;
+  if (dyn_video_new.direct_video < 0)
+    dyn_video_new.direct_video = 1;
+  if (dyn_video_new.direct_video > 1 )
+    dyn_video_new.direct_video = 0;
+}
+
+void video_set_vmode(int value)
+{
+  dyn_video_new.video_mode = value;
+  if (dyn_video_new.video_mode < -1)
+    dyn_video_new.video_mode = 14;
+  if (dyn_video_new.video_mode > 14 )
+    dyn_video_new.video_mode = -1;
+}
+
+
+int video_get_vsync_adjust()
+{
+  return dyn_video_new.vsync_adjust; 
+}
+
+int video_get_vscale_mode()
+{
+  return dyn_video_new.vscale_mode; 
+}
+
+int video_get_direct_video()
+{
+  return dyn_video_new.direct_video; 
+}
+
+int video_get_vmode()
+{
+  return dyn_video_new.video_mode;
+}
+
+void video_get_vmode_description(int vmode, char *res, size_t res_size)
+{
+  vmode_t use_mode;
+  if (vmode == -1)
+  {
+			for (int i = 0; i < 8; i++) use_mode.vpar[i] = v_cur.item[i + 1];
+      use_mode.Fpix = v_cur.Fpix;
+  } else {
+    memcpy(&use_mode, &vmodes[vmode], sizeof(use_mode));
+  }
+
+  int pix = (use_mode.vpar[0] + use_mode.vpar[1] + use_mode.vpar[2] + use_mode.vpar[3]) * (use_mode.vpar[4] + use_mode.vpar[5] + use_mode.vpar[6] + use_mode.vpar[7]);  
+  double fps = 1/(pix/(use_mode.Fpix*1000000));
+  snprintf(res, res_size, "%dx%d %.0fHz", use_mode.vpar[0], use_mode.vpar[4], fps);
+}
+
+static void power_down_hdmi()
+{
+	int fd = i2c_open(0x39, 0);
+	if (fd >= 0)
+	{
+  	int res = i2c_smbus_write_byte_data(fd, 0x41, 0x40);
+		if (res < 0) printf("i2c: write error (%02X %02X): %d\n", 0x41, 0x40, res);
+		i2c_close(fd);
+	}
+	else
+	{
+		printf("*** ADV7513 not found on i2c bus! HDMI won't be available!\n");
+	}
+}
+
+
+void video_apply_changes()
+{
+  dyn_video_revert.vsync_adjust = cfg.vsync_adjust;
+  dyn_video_revert.vscale_mode = cfg.vscale_mode;
+  dyn_video_revert.direct_video = cfg.direct_video;
+  strcpy(dyn_video_revert.vmode_str, cfg.video_conf);
+
+  cfg.vsync_adjust = dyn_video_new.vsync_adjust;
+  cfg.vscale_mode = dyn_video_new.vscale_mode;
+  cfg.direct_video = dyn_video_new.direct_video;
+  if (dyn_video_new.video_mode != -1)
+    snprintf(cfg.video_conf, sizeof(cfg.video_conf), "%d", dyn_video_new.video_mode);
+
+  dyn_video_timer = GetTimer(20000);
+
+  if (cfg.direct_video != dyn_video_revert.direct_video)
+  {
+    power_down_hdmi();
+    video_init();
+  }
+  video_mode_load();
+	video_set_mode(&v_def, 0);
+	user_io_send_buttons(1);
+  video_mode_adjust(true);
+}
+
+
+void video_revert_changes()
+{
+  bool dv_changed = cfg.direct_video != dyn_video_revert.direct_video;
+  cfg.vsync_adjust = dyn_video_revert.vsync_adjust;
+  cfg.vscale_mode = dyn_video_revert.vscale_mode;
+  cfg.direct_video = dyn_video_revert.direct_video;
+  strcpy(cfg.video_conf, dyn_video_revert.vmode_str);
+
+  dyn_video_new.vsync_adjust = dyn_video_revert.vsync_adjust;
+  dyn_video_new.vscale_mode = dyn_video_revert.vscale_mode;
+  dyn_video_new.direct_video = dyn_video_revert.direct_video;
+  dyn_video_new.video_mode =  -1;
+
+
+  if (dv_changed)
+  {
+    power_down_hdmi();
+    video_init();
+  }
+  video_mode_load();
+	video_set_mode(&v_def, 0);
+	user_io_send_buttons(1);
+  video_mode_adjust(true);
+  dyn_video_timer = 0;
+}
+
+int video_check_revert_timer()
+{
+  if (!dyn_video_timer)
+    return -2;
+
+  unsigned long cur_time = GetTimer(0);
+  if (cur_time >= dyn_video_timer)
+  {
+    video_revert_changes();
+    return -1;
+  }
+
+  return dyn_video_timer - cur_time;
+}
+
+void video_accept_changes()
+{
+  dyn_video_timer = 0;
+}
+
 

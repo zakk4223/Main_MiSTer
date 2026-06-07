@@ -225,6 +225,11 @@ enum MENU
   MENU_SAVE_STATE1,
   MENU_SAVE_STATE2,
   MENU_SAVE_STATE3,
+	// Menu config menu
+  MENU_VIDEO_CFG1,
+  MENU_VIDEO_CFG2,
+  MENU_VIDEO_CONFIRM1,
+  MENU_VIDEO_CONFIRM2,
 };
 
 static bool menu_using_fb = false;
@@ -246,7 +251,11 @@ static pid_t ttypid = 0;
 static int ttypipe[2];
 static bool menu_did_write;
 
+
+
 extern const char *version;
+
+
 
 const char *config_tos_wrprot[] = { "None", "A:", "B:", "A: and B:" };
 
@@ -3217,7 +3226,12 @@ void HandleUI(void)
 				menustate = sharpmz_default_ui_state();
 				break;
 			}
-		}
+		} else if (right)
+    {
+        menusub = 0;
+        menustate = MENU_VIDEO_CFG1;
+        video_start_reconfig();
+    }
 		else if (minus || plus)
 		{
 			if (menusub == 10 && audio_filter_en())
@@ -7975,6 +7989,107 @@ void HandleUI(void)
       }
       }
       break;
+
+    case MENU_VIDEO_CFG1:
+      {
+          uint32_t n = 0;
+          char vdesc[256];
+          menumask = 0x3D;
+          menustate = MENU_VIDEO_CFG2;
+          parentstate = MENU_VIDEO_CFG1;
+		      OsdSetTitle("Scaler");
+          if (video_get_vmode() == -1)
+            snprintf(s, sizeof(s), " Video Mode: Current ");
+          else
+            snprintf(s, sizeof(s), " Video mode: %d ", video_get_vmode());
+          MenuWrite(n, s, menusub == n, 0); n++;
+          video_get_vmode_description(video_get_vmode(), vdesc, sizeof(vdesc));
+          snprintf(s, sizeof(s), "     %s     ", vdesc);
+          MenuWrite(n, s, menusub == n, 0); n++;
+					snprintf(s, sizeof(s), " Vsync adjust: %d ", video_get_vsync_adjust());
+          MenuWrite(n, s, menusub == n, 0); n++;
+					snprintf(s, sizeof(s), " Vscale mode: %d ", video_get_vscale_mode());
+          MenuWrite(n, s, menusub == n, 0); n++;
+					snprintf(s, sizeof(s), " Direct video: %d ", video_get_direct_video());
+          MenuWrite(n, s, menusub == n, 0); n++;
+          snprintf(s, sizeof(s), " Apply ");
+          MenuWrite(n, s, menusub == n, 0); n++;
+					for (int i = n; i < OsdGetSize(); i++) MenuWrite(i, "", 0, 0);
+      }
+    break;
+
+    case MENU_VIDEO_CFG2:
+    {
+        uint32_t n = 0;
+        int vcfg_val = 0;
+        menustate = MENU_VIDEO_CFG1;
+        if (menu)
+        {
+          menustate = MENU_NONE1;
+        } else if (left) {
+          menusub = 0;
+          menustate = MENU_COMMON1;
+        } else if (select || plus || minus) {
+          if (menusub == 0) {
+            vcfg_val = video_get_vmode() + ((select || plus) ? 1 : -1);
+            video_set_vmode(vcfg_val);
+          } else if (menusub == 2) {
+            vcfg_val = video_get_vsync_adjust() + ((select || plus) ? 1 : -1);
+            video_set_vsync_adjust(vcfg_val);
+          } else if (menusub == 3) {
+            vcfg_val = video_get_vscale_mode() + ((select || plus) ? 1 : -1);
+            video_set_vscale_mode(vcfg_val);
+          } else if (menusub == 4) {
+            vcfg_val = video_get_direct_video() + ((select || plus) ? 1 : -1);
+            video_set_direct_video(vcfg_val);
+          } else if (menusub == 5) {
+            if (select) {
+              video_apply_changes();
+              menustate = MENU_VIDEO_CONFIRM1;
+              menusub = 0;
+            }
+          }
+        }
+    }
+    break;
+    case MENU_VIDEO_CONFIRM1:
+    {
+        int v_timer = video_check_revert_timer();
+
+        menumask = 0x3;
+        if (v_timer <= 0) 
+        {
+          menustate = MENU_VIDEO_CFG1;
+          menusub = 0;
+        } else {
+          OsdSetTitle("Scaler");
+          menustate = MENU_VIDEO_CONFIRM2;
+          parentstate = MENU_VIDEO_CONFIRM1;
+          uint32_t n = 0;
+          MenuWrite(n, " Video settings have changed ",0, 0); n++;
+          snprintf(s, sizeof(s), " Reverting in %d seconds ", v_timer/1000);
+          MenuWrite(n, s, 0, 0); n++;
+          MenuWrite(n, " Revert", menusub == n-2, 0); n++;
+          MenuWrite(n, " Accept", menusub == n-2, 0); n++;
+					for (int i = n; i < OsdGetSize(); i++) MenuWrite(i, "", 0, 0);
+        }
+    }
+    break;
+    case MENU_VIDEO_CONFIRM2:
+    {
+        menustate = MENU_VIDEO_CONFIRM1;
+        if (select)
+        {
+          if (menusub == 0)
+          {
+            video_revert_changes();
+          } else if (menusub == 1) {
+            video_accept_changes();
+          }
+        }
+    }
+    break;
+        
 		/******************************************************************/
 		/* we should never come here                                      */
 		/******************************************************************/

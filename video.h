@@ -57,6 +57,22 @@ void  video_loadPreset(char *name, bool save);
 
 int   video_get_rotated();
 
+void video_set_vsync_adjust(int value);
+void video_set_vscale_mode(int value);
+void video_set_direct_video(int value);
+int  video_get_vsync_adjust();
+int  video_get_vscale_mode();
+int  video_get_direct_video();
+void video_apply_changes();
+void video_revert_changes();
+int video_check_revert_timer();
+void video_accept_changes();
+void video_start_reconfig();
+int video_get_vmode();
+void video_get_vmode_description(int vmode, char *res, size_t res_size);
+void video_set_vmode(int value);
+
+
 void video_cfg_reset();
 
 void  video_mode_adjust(bool force = false);
