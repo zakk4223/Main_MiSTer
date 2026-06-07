@@ -15,6 +15,7 @@
 #include "../../shmem.h"
 #include "../../str_util.h"
 #include "../../cheats.h"
+#include "../../cfg.h"
 
 #include "buffer.h"
 #include "mra_loader.h"
@@ -86,7 +87,7 @@ void arcade_nvm_clear()
 
 void arcade_nvm_save()
 {
-	if(nvram_idx && nvram_size)
+	if(nvram_idx && nvram_size && !cfg.disable_nvram)
 	{
 		char path[256] = CONFIG_DIR"/nvram/";
 		FileCreatePath(path);
@@ -110,7 +111,7 @@ void arcade_nvm_save()
 
 static void arcade_nvm_load()
 {
-	if (nvram_idx && nvram_size)
+	if (nvram_idx && nvram_size && !cfg.disable_nvram)
 	{
 		char path[256] = "nvram/";
 		uint8_t *buf = new uint8_t[nvram_size];
