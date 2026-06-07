@@ -8443,6 +8443,8 @@ int menu_present()
 
 void Info(const char *message, int timeout, int width, int height, int frame)
 {
+  if (cfg.suppress_info) return;
+
 	if (menustate <= MENU_INFO)
 	{
 		OSD_PrintInfo(message, &width, &height, frame);

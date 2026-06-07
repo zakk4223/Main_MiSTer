@@ -37,6 +37,7 @@ typedef struct
 static const ini_var_t ini_vars[] =
 {
 
+	{ "SUPPRESS_INFO", (void *)(&(cfg.suppress_info)), UINT8, 0, 1 },
 	{ "EXTERNAL_SAVE_STATE_UI", (void *)(&(cfg.external_save_state_ui)), STRING, 0, sizeof(cfg.external_save_state_ui) - 1},
 	{ "SOCD_UD", (void*)(&(cfg.socd_ud)), STRING, 0, sizeof(cfg.socd_ud) - 1 },
 	{ "SOCD_LR", (void*)(&(cfg.socd_lr)), STRING, 0, sizeof(cfg.socd_lr) - 1 },
