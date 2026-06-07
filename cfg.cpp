@@ -36,7 +36,11 @@ typedef struct
 
 static const ini_var_t ini_vars[] =
 {
-        { "DISABLE_NVRAM", (void*)(&(cfg.disable_nvram)), UINT8, 0, 1},
+
+	{ "SS_LOAD_BIT", (void *)(&(cfg.ss_load_bit)), STRING, 0, sizeof(cfg.ss_load_bit) - 1},
+	{ "SS_SAVE_BIT", (void *)(&(cfg.ss_save_bit)), STRING, 0, sizeof(cfg.ss_save_bit) - 1},
+	{ "SS_CURRENT_SLOT", (void *)(&(cfg.ss_current_slot)), STRING, 0, sizeof(cfg.ss_current_slot) - 1},
+  { "DISABLE_NVRAM", (void*)(&(cfg.disable_nvram)), UINT8, 0, 1},
 	{ "YPBPR", (void*)(&(cfg.vga_mode_int)), UINT8, 0, 1 },
 	{ "COMPOSITE_SYNC", (void*)(&(cfg.csync)), UINT8, 0, 1 },
 	{ "FORCED_SCANDOUBLER", (void*)(&(cfg.forced_scandoubler)), UINT8, 0, 1 },

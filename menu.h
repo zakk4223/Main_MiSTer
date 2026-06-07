@@ -11,8 +11,8 @@ void menu_process_save();
 void PrintDirectory(int expand = 0);
 void ScrollLongName(void);
 
-void ProgressMessage(const char* title = 0, const char* text = 0, int current = 0, int max = 0);
-void InfoMessage(const char *message, int timeout = 2000, const char *title = "Message");
+void ProgressMessage(const char* title = 0, const char* text = 0, int current = 0, int max = 0, const int use_state = 2);
+void InfoMessage(const char *message, int timeout = 2000, const char *title = "Message", const int use_state = 2);
 void Info(const char *message, int timeout = 2000, int width = 0, int height = 0, int frame = 0);
 void MenuHide();
 void SelectINI();
@@ -23,6 +23,7 @@ int menu_lightgun_cb(int idx, uint16_t type, uint16_t code, int value);
 int menu_allow_cfg_switch();
 void StoreIdx_F(int idx, const char *path);
 void StoreIdx_S(int idx, const char *path);
+void menu_open_savestate_osd();
 
 int menu_present();
 

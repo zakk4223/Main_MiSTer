@@ -106,6 +106,9 @@ typedef struct {
 	char debug;
 	uint8_t lookahead;
 	char main[1024];
+	char ss_load_bit[8];
+	char ss_save_bit[8];
+	char ss_current_slot[15];
 	char vfilter_interlace_default[1023];
 	char autofire_rates[3072];
 	uint8_t autofire_on_directions;

@@ -41,6 +41,10 @@
 #include "scaler.h"
 #include "support.h"
 
+static char ss_rom_name[1024] = {};
+static uint8_t ss_save_slot = 1;
+static bool ss_save_pending = false;
+
 static char core_path[1024] = {};
 static char rbf_path[1024] = {};
 
@@ -1964,6 +1968,7 @@ int process_ss(const char *rom_name, int enable)
 
 		FileGenerateSavestatePath(rom_name, ss_name, 1);
 		ss_sufx = ss_name + strlen(ss_name) - 4;
+    strcpy(ss_rom_name, rom_name);
 		return 1;
 	}
 
@@ -1990,12 +1995,19 @@ int process_ss(const char *rom_name, int enable)
 					MenuHide();
 					Info("Saving the state", 500);
 
-					*ss_sufx = i + '1';
-					if (FileOpenEx(&f, ss_name, O_CREAT | O_TRUNC | O_RDWR | O_SYNC))
+          char save_name[1024];
+          if (ss_save_pending)
+          {
+            FileGenerateSavestatePath(ss_rom_name, save_name, ss_save_slot);  
+          } else {
+					  *ss_sufx = i + '1';
+            strcpy(save_name, ss_name);
+          }
+					if (FileOpenEx(&f, save_name, O_CREAT | O_TRUNC | O_RDWR | O_SYNC))
 					{
 						int ret = FileWriteAdv(&f, base[i], size);
 						FileClose(&f);
-						printf("Wrote %d bytes to file: %s\n", ret, ss_name);
+						printf("Wrote %d bytes to file: %s base %d\n", ret, ss_name, ss_base);
 					}
 					else
 					{
@@ -4210,20 +4222,20 @@ void user_io_kbd(uint16_t key, int press)
 		if (key)
 		{
 			uint32_t code = get_ps2_code(key);
-			bool is_menu_event = ((has_menu() || osd_is_visible || (get_key_mod() & (LALT | RALT | RGUI | LGUI))) && (((key == KEY_F12) && (!is_f12_mod_needed() || (get_key_mod() & (RGUI | LGUI)))) || key == KEY_MENU));
+			bool is_menu_event = ((has_menu() || osd_is_visible || (get_key_mod() & (LALT | RALT | RGUI | LGUI))) && (((key == KEY_F12 || key == KEY_F8) && (!is_f12_mod_needed() || (get_key_mod() & (RGUI | LGUI)))) || key == KEY_MENU));
 			if (!press)
 			{
 				if (is_menu() && !video_fb_state()) printf("PS2 code(break)%s for core: %d(0x%X)\n", (code & EXT) ? "(ext)" : "", code & 255, code & 255);
 
 				if (key == KEY_MENU) key = KEY_F12;
-				if (key != KEY_F12 || !is_menu_event)
+				if ((key != KEY_F12 && key != KEY_F8) || !is_menu_event)
 				{
 
 					if (osd_is_visible) menu_key_set(UPSTROKE | key);
 					// these modifiers should be passed to core even if OSD is open or they will get stuck!
 					if (!osd_is_visible || key == KEY_LEFTALT || key == KEY_RIGHTALT || key == KEY_LEFTMETA || key == KEY_RIGHTMETA) {send_keycode(key, press);}
 				}
-				if (is_menu_event) menu_key_set(KEY_F12 | UPSTROKE);
+				if (is_menu_event) menu_key_set(key | UPSTROKE);
 			}
 			else
 			{
@@ -4344,3 +4356,80 @@ uint16_t user_io_get_sdram_cfg()
 {
 	return sdram_cfg;
 }
+
+
+
+bool core_has_save_states()
+{
+  return (ss_base != 0 && cfg.ss_save_bit[0]);
+}
+
+
+static int current_core_save_slot()
+{
+  if (cfg.ss_current_slot[0])
+  {
+      return user_io_status_get(cfg.ss_current_slot, 0);
+  }
+
+  return -1;
+}
+
+
+int ss_menu_get_descr(char *descr, int descr_sz)
+{
+  char ss_name[1024] = {};
+  if (!ss_base || !ss_rom_name[0]) return 0;
+  FileGenerateSavestatePath(ss_rom_name, ss_name, ss_save_slot);
+  if (!FileExists(ss_name)) return 0;
+  struct stat64 *st = getPathStat(ss_name);
+  snprintf(descr, descr_sz, "%s", ctime(&st->st_mtime));
+  return 1;
+}
+
+void ss_menu_load()
+{
+  char ss_name[1024] = {};
+  fileTYPE ss_file;
+  uint32_t map_addr = 0;
+  int current_core_slot = current_core_save_slot(); 
+  if (!cfg.ss_save_bit[0]) return;
+  if (!ss_base || current_core_slot == -1) return;
+
+  FileGenerateSavestatePath(ss_rom_name, ss_name, ss_save_slot);
+  if (!FileExists(ss_name)) return;
+  if (!FileOpen(&ss_file, ss_name)) return;
+  map_addr = ss_base + (ss_size * current_core_slot);
+  if (!map_addr) return;
+  void *ssmap = shmem_map(map_addr, ss_size);
+  if (!ssmap) return;
+  FileReadAdv(&ss_file, ssmap, ss_size);
+  FileClose(&ss_file);
+	*(uint32_t*)(ssmap) = 0xFFFFFFFF;
+  shmem_unmap(ssmap, ss_size);
+  user_io_status_set(cfg.ss_load_bit, 1);
+  user_io_status_set(cfg.ss_load_bit, 0);
+}
+
+void ss_menu_set_slot(uint8_t slot)
+{
+  ss_save_slot = slot;
+}
+
+uint8_t ss_menu_get_slot()
+{
+  return ss_save_slot;
+}
+
+
+void ss_menu_save()
+{
+
+  if (!cfg.ss_save_bit[0]) return;
+
+  ss_save_pending = true;
+  user_io_status_set(cfg.ss_save_bit, 1);
+  user_io_status_set(cfg.ss_save_bit, 0);
+}
+
+

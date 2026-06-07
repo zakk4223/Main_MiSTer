@@ -220,6 +220,10 @@ enum MENU
 	MENU_ATARI8BIT_CART2,
 	// Player num remap
 	MENU_JOYNUMREMAP,
+	// Savestate menu
+  MENU_SAVE_STATE1,
+  MENU_SAVE_STATE2,
+  MENU_SAVE_STATE3,
 };
 
 static uint32_t menustate = MENU_NONE1;
@@ -542,6 +546,7 @@ void build_advanced_map_code_str(uint16_t *abm_codes, size_t abm_size, char *cod
 }
 
 
+static bool ss_quick_load = false;
 /* the Atari core handles OSD keys competely inside the core */
 static uint32_t menu_key = 0;
 
@@ -588,7 +593,7 @@ static uint32_t menu_key_get(void)
 		else if (CheckTimer(repeat))
 		{
 			repeat = GetTimer(REPEATRATE);
-			if (GetASCIIKey(c1) || menustate == MENU_FILE_SELECT2 || ((menustate == MENU_COMMON2) && (menusub == 17)) || ((menustate == MENU_SYSTEM2) && (menusub == 5)))
+			if (GetASCIIKey(c1) || menustate == MENU_FILE_SELECT2 || ((menustate == MENU_COMMON2) && (menusub == 17)) || ((menustate == MENU_SYSTEM2) && (menusub == 5)) || menustate == MENU_SAVE_STATE3) 
 			{
 				c = c1;
 				hold_cnt++;
@@ -1344,6 +1349,36 @@ void HandleUI(void)
 				menustate = MENU_JOYDIGMAP;
 			}
 			break;
+
+      /*
+       * F8 HOLD: after some time, restore last loaded savestate
+       * F8 RELEASE: show save state menu
+       * A proper patch here should probably create a 'save_state_menu' global 
+       * that's just like 'menu'. MENU_SAVE_STATE3 would react to this to close itself etc.
+       * But that's too much patching random other things, so in the interest of not having the auto-patch
+       * fail randomly, just deal with closing and opening the menu here
+       */
+      case KEY_F8:
+        ss_quick_load = false;
+        if (menustate != MENU_SAVE_STATE1 && menustate != MENU_SAVE_STATE2)
+        {
+          menustate = MENU_SAVE_STATE3;
+        }
+        break;
+      case KEY_F8 | UPSTROKE:
+        ProgressMessage(0,0,0,0);
+        if (menustate == MENU_SAVE_STATE2 || menustate == MENU_SAVE_STATE1)
+        {
+          menustate = MENU_NONE2;
+        } else if (!ss_quick_load) {
+          menu = true;
+          saved_menustate = MENU_SAVE_STATE1;
+          menustate = MENU_NONE2;
+          ProgressMessage(0,0,0,0);
+			    if(video_fb_state()) video_menu_bg(user_io_status_get("[3:1]"));
+			    video_fb_enable(0);
+        }
+        break;
 
 			// Within the menu the esc key acts as the menu key. problem:
 			// if the menu is left with a press of ESC, then the follwing
@@ -7756,6 +7791,94 @@ void HandleUI(void)
 		}
 		break;
 
+
+  case MENU_SAVE_STATE1:
+   {
+					menustate = MENU_SAVE_STATE2;
+					parentstate = MENU_SAVE_STATE1;
+					OsdSetTitle("Save States", 0);
+          char ss_descr[1024];
+          int d_status = ss_menu_get_descr(&ss_descr[1], sizeof(ss_descr)-1);
+          
+					menumask = 0x0D;
+					uint32_t n = 0;
+
+					snprintf(s, sizeof(s), " Slot %d", ss_menu_get_slot());
+          MenuWrite(n, s, menusub == n, 0); n++;
+
+          if (d_status)
+          {
+            ss_descr[0] = ' ';
+            MenuWrite(n, ss_descr, menusub == n, 0); n++;
+          } else {
+            MenuWrite(n, " <empty>", menusub == n, 0); n++;
+          }
+
+          MenuWrite(n, " Save", menusub == n, 0); n++;
+					MenuWrite(n, " Load", menusub == n, 0); n++;
+					for (int i = n; i < OsdGetSize() - 1; i++) MenuWrite(i, "", 0, 0);
+   }
+   break;
+  case MENU_SAVE_STATE2:
+   {
+     if (select || minus || plus || left || right)
+     {
+       menustate = MENU_SAVE_STATE1;
+       uint8_t curr_save_slot = ss_menu_get_slot();
+       switch(menusub)
+       {
+         case 0:
+            if (select || plus || right)
+            {
+                curr_save_slot++;
+                if (curr_save_slot > 25) curr_save_slot = 1;
+            } else if (minus || left) {
+              if (curr_save_slot == 1)
+              {
+                curr_save_slot = 25;
+              } else {
+                curr_save_slot--;
+              }
+            }
+            ss_menu_set_slot(curr_save_slot);
+           break;
+         case 2:
+           if (select)
+           {
+            ss_menu_save();
+            menustate = MENU_NONE1;
+           }
+           break;
+        case 3:
+           if (select)
+           {
+             ss_menu_load();
+             menustate = MENU_NONE1;
+           }
+           break;
+       }
+     }
+     if (menu)
+     {
+        menustate = MENU_NONE1;
+     }
+   }
+   break;
+    case MENU_SAVE_STATE3:
+      {
+
+      int load_ss = hold_cnt / 3;
+      if (load_ss > 10)
+      {
+        ss_menu_load();
+        menustate = MENU_NONE1;
+        ProgressMessage(0,0,0,0,MENU_SAVE_STATE3);
+        ss_quick_load = true;
+      } else {
+        ProgressMessage("SState", "Restoring...", hold_cnt, 60, MENU_SAVE_STATE3); 
+      }
+      }
+      break;
 		/******************************************************************/
 		/* we should never come here                                      */
 		/******************************************************************/
@@ -8065,9 +8188,9 @@ static void set_text(const char *message, unsigned char code)
 	while (l <= 7) OsdWrite(l++, "", 0, 0);
 }
 
-void InfoMessage(const char *message, int timeout, const char *title)
+void InfoMessage(const char *message, int timeout, const char *title, const int use_state)
 {
-	if (menustate <= MENU_INFO)
+	if (menustate <= MENU_INFO || menustate == MENU_SAVE_STATE3)
 	{
 		if (menustate != MENU_INFO)
 		{
@@ -8078,7 +8201,7 @@ void InfoMessage(const char *message, int timeout, const char *title)
 		set_text(message, 0);
 
 		menu_timer = GetTimer(timeout);
-		menustate = MENU_INFO;
+		menustate = use_state; 
 		HandleUI();
 		OsdUpdate();
 	}
@@ -8167,7 +8290,7 @@ static char pchar[] = { 0x8C, 0x8E, 0x8F, 0x90, 0x91, 0x7F };
 #define PROGRESS_CHARS  (int)(sizeof(pchar)/sizeof(pchar[0]))
 #define PROGRESS_MAX    ((PROGRESS_CHARS*PROGRESS_CNT)-1)
 
-void ProgressMessage(const char* title, const char* text, int current, int max)
+void ProgressMessage(const char* title, const char* text, int current, int max, const int use_state)
 {
 	static int progress;
 	if (!current && !max)
@@ -8195,6 +8318,20 @@ void ProgressMessage(const char* title, const char* text, int current, int max)
 		for (int i = 0; i <= new_progress; i++) buf[i] = (i < new_progress) ? 0x7F : c;
 		buf[PROGRESS_CNT] = 0;
 
-		InfoMessage(progress_buf, 2000, title);
+		InfoMessage(progress_buf, 2000, title, use_state);
 	}
 }
+
+
+/*
+void menu_open_savestate_osd()
+{
+  if (!user_io_osd_is_visible())
+  {
+    menu_open_savestate = true;
+  } else if (menustate == MENU_SAVE_STATE1 || menustate == MENU_SAVE_STATE2) {
+    menu_open_savestate = false;
+    menustate = MENU_NONE1;
+  }
+}
+*/

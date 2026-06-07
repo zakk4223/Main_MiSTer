@@ -295,6 +295,16 @@ char is_atari800();
 char is_atari5200();
 char is_3do();
 
+
+void ss_menu_load();
+void ss_menu_save();
+void ss_menu_set_slot(uint8_t slot);
+uint8_t ss_menu_get_slot();
+int ss_menu_get_descr(char *descr, int descr_sz);
+bool core_has_save_states();
+
+
+
 #define HomeDir(x) user_io_get_core_path(x)
 #define CoreName user_io_get_core_name()
 #define CoreName2 user_io_get_core_name2()
