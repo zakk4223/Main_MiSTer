@@ -7,6 +7,15 @@
 
 #include <inttypes.h>
 
+#define SOCD_UD_NEUTRAL 1
+#define SOCD_UD_LAST 2
+#define SOCD_UD_UP 3 
+#define SOCD_UD_DOWN 4 
+#define SOCD_LR_NEUTRAL 1 
+#define SOCD_LR_LAST 2 
+#define SOCD_LR_LEFT 3 
+#define SOCD_LR_RIGHT 4 
+
 //// type definitions ////
 typedef struct {
 	uint8_t  disable_nvram;
@@ -109,6 +118,10 @@ typedef struct {
 	char ss_load_bit[8];
 	char ss_save_bit[8];
 	char ss_current_slot[15];
+	char socd_ud[16];
+	char socd_lr[16];
+	uint8_t socd_ud_int;
+	uint8_t socd_lr_int;
 	char vfilter_interlace_default[1023];
 	char autofire_rates[3072];
 	uint8_t autofire_on_directions;

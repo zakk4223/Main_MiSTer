@@ -37,6 +37,8 @@ typedef struct
 static const ini_var_t ini_vars[] =
 {
 
+	{ "SOCD_UD", (void*)(&(cfg.socd_ud)), STRING, 0, sizeof(cfg.socd_ud) - 1 },
+	{ "SOCD_LR", (void*)(&(cfg.socd_lr)), STRING, 0, sizeof(cfg.socd_lr) - 1 },
 	{ "SS_LOAD_BIT", (void *)(&(cfg.ss_load_bit)), STRING, 0, sizeof(cfg.ss_load_bit) - 1},
 	{ "SS_SAVE_BIT", (void *)(&(cfg.ss_save_bit)), STRING, 0, sizeof(cfg.ss_save_bit) - 1},
 	{ "SS_CURRENT_SLOT", (void *)(&(cfg.ss_current_slot)), STRING, 0, sizeof(cfg.ss_current_slot) - 1},
@@ -448,6 +450,23 @@ static void ini_parse_var(char* buf)
 			break;
 		}
 	}
+
+  if (strlen(cfg.socd_ud))
+  {
+    if (!strcasecmp(cfg.socd_ud, "neutral")) cfg.socd_ud_int = SOCD_UD_NEUTRAL;
+    if (!strcasecmp(cfg.socd_ud, "last")) cfg.socd_ud_int = SOCD_UD_LAST;
+    if (!strcasecmp(cfg.socd_ud, "up")) cfg.socd_ud_int = SOCD_UD_UP;
+    if (!strcasecmp(cfg.socd_ud, "down")) cfg.socd_ud_int = SOCD_UD_DOWN;
+  }
+
+  if (strlen(cfg.socd_lr))
+  {
+    if (!strcasecmp(cfg.socd_lr, "neutral")) cfg.socd_lr_int = SOCD_LR_NEUTRAL;
+    if (!strcasecmp(cfg.socd_lr, "last")) cfg.socd_lr_int = SOCD_LR_LAST;
+    if (!strcasecmp(cfg.socd_lr, "left")) cfg.socd_lr_int = SOCD_LR_LEFT;
+    if (!strcasecmp(cfg.socd_lr, "right")) cfg.socd_lr_int = SOCD_LR_RIGHT;
+  }
+
 }
 
 static void ini_parse(int alt, const char *vmode)

@@ -6726,7 +6726,41 @@ int input_poll(int getchar)
 	{
 		for (int i = 0; i < NUMPLAYERS; i++) {
 			joy_mask[i] = joy_mask[i] | autofire_mask[i];
-			int newdir = (joy_mask[i] & 0xF) | (joy_mask_prev[i] & 0xF);
+			int newdir = (joy_mask[i] & 0xF) ^ (joy_mask_prev[i] & 0xF);
+      if ((joy_mask[i] & 0x3) == 0x3)
+      {
+        switch(cfg.socd_lr_int) //l+r socd
+        {
+          case SOCD_LR_NEUTRAL:
+            joy_mask[i] &= ~0x3;
+            break;
+          case SOCD_LR_LAST:
+            joy_mask[i] &= ~(~newdir & 0x3);
+            break;
+          case SOCD_LR_LEFT:
+            joy_mask[i] &= ~0x1;
+            break;
+          case SOCD_LR_RIGHT:
+            joy_mask[i] &= ~0x2;
+        }
+      }
+      if ((joy_mask[i] & 0xC) == 0xC) //u+d socd
+      {
+        switch(cfg.socd_ud_int)
+        {
+          case SOCD_UD_NEUTRAL:
+            joy_mask[i] &= ~0xC;
+            break;
+          case SOCD_UD_LAST:
+            joy_mask[i] &= ~(~newdir & 0xC);
+            break;
+          case SOCD_UD_UP:
+            joy_mask[i] &= ~0x4;
+            break;
+          case SOCD_UD_DOWN:
+            joy_mask[i] &= ~0x8;
+        }
+      }
 			if (joy_mask[i] != joy_mask_prev[i])
 			{
 				joy_mask_prev[i] = joy_mask[i];
