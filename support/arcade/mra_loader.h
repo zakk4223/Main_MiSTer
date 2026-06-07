@@ -67,6 +67,8 @@ bool arcade_is_vertical();
 int arcade_get_direction();
 
 void arcade_nvm_save();
+bool arcade_has_nvm();
+void arcade_nvm_clear();
 
 mgl_struct* mgl_parse(const char *xml);
 mgl_struct* mgl_get();

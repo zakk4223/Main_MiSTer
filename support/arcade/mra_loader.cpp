@@ -63,6 +63,27 @@ static int  nvram_idx  = 0;
 static int  nvram_size = 0;
 static char nvram_name[200] = {};
 
+
+bool arcade_has_nvm()
+{
+       if (nvram_idx && nvram_size)
+       {
+               return true;
+       }
+
+       return false;
+}
+
+void arcade_nvm_clear()
+{
+       if (nvram_idx && nvram_size)
+       {
+               char path[256] = CONFIG_DIR"/nvram/";
+               strcat(path, nvram_name);
+               FileDelete(path);
+       }
+}
+
 void arcade_nvm_save()
 {
 	if(nvram_idx && nvram_size)
